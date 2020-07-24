@@ -1,0 +1,3250 @@
+---
+title: "Polyandry and senescence shape egg size variation in a precocial bird"
+author: "[Lourenço Falcao Rodrigues](https://teguam.es/en/members/), [Anne Hertel](http://www.bik-f.de/root/index.php?page_id=1168), [Luke Eberhart-Phillips](https://www.orn.mpg.de/person/52988/3731861)"
+date: "24 July 2020"
+mail: "lourenco.falcao@uam.es"
+twitter: "FalcaoLourenco"
+home: "www.orn.mpg.de/3732316/projectkuepper4"
+github: "lorenf95"
+logo: "logo_MPlanck.png"
+output: 
+  epuRate::epurate: 
+    toc: TRUE
+    number_sections: FALSE
+    code_folding: "show"
+---
+
+<br><br>
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+```
+
+**Prerequisites:** 
+
+The following packages are needed to employ this R Markdown document and can be easily installed from [CRAN](http://cran.r-project.org/) by uncommenting the `install.packages` function below:
+
+```{r libraries, message = FALSE}
+# install.packages(c("readr", "tidyverse", "lme4", "rmcorr", "effects", 
+#                    "coefplot", "arm", "RColorBrewer", "reshape2", "gridExtra", 
+#                    "rmarkdown", "gt", "cowplot", "RSQLite", "BaSTA", 
+#                    "snowfall", "kableExtra", "lubridate", "MuMIn", "GGally",
+#                    "performance", "magick", "ggpubr", "extrafont", "jpeg", 
+#                    "grid", "standardize", "performance", "broom"))
+library(readr)
+library(tidyverse)
+library(lme4)
+library(rmcorr)
+library(effects)
+library(coefplot)
+library(arm)
+library(RColorBrewer)
+library(reshape2)
+library(gridExtra)
+library(rmarkdown)
+library(gt)
+library(cowplot)
+library(RSQLite)
+library(BaSTA)
+library(snowfall)
+library(kableExtra)
+library(lubridate)
+library(MuMIn)
+library(GGally)
+library(performance)
+library(magick)
+library(ggpubr)
+library(extrafont)
+library(jpeg)
+library(grid)
+library(standardize)
+library(performance)
+library(broom)
+```
+
+```{r Housekeeping, echo=FALSE}
+rm(list = ls())
+```
+
+```{r set plotting theme, include=FALSE}
+# define the plotting theme to be used in subsequent ggplots
+luke_theme <- 
+  theme_bw() +
+  theme(
+    text = element_text(family = "Franklin Gothic Book"),
+    legend.title = element_text(size = 10),
+    legend.text = element_text(size = 8),
+    axis.title.x = element_text(size = 10),
+    axis.text.x  = element_text(size = 8), 
+    axis.title.y = element_text(size = 10),
+    axis.text.y = element_text(size = 8),
+    panel.grid.major = element_blank(),
+    panel.grid.minor = element_blank(),
+    axis.ticks = element_line(size = 0.5, colour = "grey40"),
+    axis.ticks.length = unit(0.2, "cm"),
+    panel.border = element_rect(linetype = "solid", colour = "grey")
+  )
+
+# set the ggplotting theme
+theme_set(luke_theme)
+```
+
+```{r plover date convert, echo=FALSE}
+# this function converts the mdd date format in the CeutaCLOSED database to 
+# YYYY-MM-DD format that can be used for temporal calculations.
+plover_date_convert <- function(df){
+  if(sum(grepl(paste(c("date", "alive", "manip"), collapse = "|"), names(df))) > 1){
+    df[, which(grepl(paste(c("date", "alive", "manip"), collapse = "|"), names(df)))] <- 
+      lapply(df[, which(grepl(paste(c("date", "alive", "manip"), collapse = "|"), names(df)))],
+             function(x) 
+               paste(df$year, 
+                     ifelse(nchar(x) == 3, 
+                            substring(x, first = 1, last = 1), 
+                            substring(x, first = 1, last = 2)), 
+                     ifelse(nchar(x) == 3, 
+                            substring(x, first = 2, last = 3), 
+                            substring(x, first = 3, last = 4)), 
+                     sep = "-"))
+    df[, which(grepl(paste(c("date", "alive", "manip"), collapse = "|"), names(df)))] <-
+      lapply(df[, which(grepl(paste(c("date", "alive", "manip"), collapse = "|"), names(df)))],
+             function(x) as.Date(x, format = "%Y-%m-%d"))
+  }
+  else{
+    df[, which(grepl(paste(c("date", "alive", "manip"), collapse = "|"), names(df)))] <- 
+      paste(df$year, 
+            ifelse(nchar(df[, which(grepl(paste(c("date", "alive", "manip"), collapse = "|"), names(df)))]) == 3, 
+                   substring(df[, which(grepl(paste(c("date", "alive", "manip"), collapse = "|"), names(df)))], first = 1, last = 1), 
+                   substring(df[, which(grepl(paste(c("date", "alive", "manip"), collapse = "|"), names(df)))], first = 1, last = 2)), 
+            ifelse(nchar(df[, which(grepl(paste(c("date", "alive", "manip"), collapse = "|"), names(df)))]) == 3, 
+                   substring(df[, which(grepl(paste(c("date", "alive", "manip"), collapse = "|"), names(df)))], first = 2, last = 3), 
+                   substring(df[, which(grepl(paste(c("date", "alive", "manip"), collapse = "|"), names(df)))], first = 3, last = 4)), 
+            sep = "-")
+    df[, which(grepl(paste(c("date", "alive", "manip"), collapse = "|"), names(df)))] <- 
+      as.Date(df[, which(grepl(paste(c("date", "alive", "manip"), collapse = "|"), names(df)))], format = "%Y-%m-%d")
+  }
+  
+  return(df)
+}
+```
+
+# Part 1: Bayesian estimation of age for unknown aged individuals
+
+## Data Import and Wrangle
+Firstly, connect to the CeutaOPEN SQLite database (open-access between 2006 to 2016; for more details, see: Eberhart-Phillips, L.J., Cruz-López, M., Lozano-Angulo, L. et al. CeutaOPEN, individual-based field observations of breeding snowy plovers *Charadrius nivosus*. *Scientific Data* 7, 149 (2020). https://doi.org/10.1038/s41597-020-0490-y).
+
+Our raw field data collected between 2017 to 2019 are not yet publically availble, but the data in these years that are needed to reproduce the results shown in our manuscript are provided here in the `BaSTA_checked_life_table_females.rds` (for Part 1 "BaSTA model selection") and the `egg_volume_data_2006_2019.rds` (for Parts 2 and 3) files found in the data folder included in the project's OSF repository.
+
+```{r CeutaOPEN connection, eval = FALSE}
+Ceuta_OPEN <- 
+  dbConnect(SQLite(), dbname = "data/Ceuta_OPEN_v1-5.sqlite")
+```
+
+```{r CeutaCLOSED connection, include=FALSE}
+Ceuta_OPEN <- 
+  dbConnect(SQLite(), dbname = "data/Ceuta_CLOSED_mdd_v1-1-5.sqlite")
+```
+***
+Wrangle the capture data
+
+```{r capture data wrangle}
+captures <- 
+  # extract the capture datatable
+  dbReadTable(Ceuta_OPEN,"Captures") %>% 
+  
+  # subset to only include snowy plovers
+  filter(species == "SNPL") %>% 
+  
+  # group by individual
+  group_by(ring) %>%
+  
+  # determine the first year that an individual was seen
+  mutate(originalsight = ifelse(age == "J", year,
+                                year[which.min(as.numeric(year))])) %>% 
+  
+  # determine if the first encouter was as an adult or a juvenile
+  mutate(chick = age[which.min(as.numeric(year))]) %>% 
+  
+  # specify first encouters as juveniles as recruits and adults as immigrants
+  mutate(recruit = ifelse(chick == "J", "Recruit", "Immigrant")) %>% 
+  
+  # if a recruit then specify the year at which it was first encountered (i.e., it's birth year); 0 for immigrants
+  mutate(birth = ifelse(recruit == "Recruit", originalsight, "0")) %>% 
+  
+  # remove 13 rows that do not have ring information (i.e., these are "observation only" captures of XX.XX|XX.XX birds)
+  filter(ring != "NA") %>% 
+  
+  # remove all individuals that are of unknown sex status
+  filter(sex != "U") %>% 
+  
+  # subset to females
+  filter(sex == "F")
+```
+***
+Assess the sample size of the capture population
+
+```{r capture sample}
+# assess how many individuals we have: Female = 807
+captures %>%  
+  group_by(sex) %>% 
+  summarise(count = n_distinct(ring)) %>% 
+  collect() %>%
+  kable(col.names = c("Sex",
+                      "Number of individuals")) %>%
+  kable_styling() %>%
+  scroll_box(width = "50%")
+        
+# assess how many immigrants and recruits we have:
+# Immigrant Females = 359, Recruit Females = 448
+captures %>%
+  group_by(recruit, sex) %>%
+  summarise(n_inds = n_distinct(ring)) %>% 
+  collect() %>%
+  kable(col.names = c("Status",
+                      "Sex",
+                      "Number of individuals")) %>%
+  kable_styling() %>%
+  scroll_box(width = "50%")
+```
+***
+Wrangle the resight data
+
+```{r wrangle resight data}
+resightings <- 
+  # extract the resight datatable
+  dbReadTable(Ceuta_OPEN,"Resights") %>% 
+  
+  # subset to only include snowy plovers
+  filter(species == "SNPL") %>% 
+  
+  # merge the ring identity to the resight codes
+  left_join(., dplyr::select(captures, ring, code), by = "code") %>% 
+  
+  # remove duplicates
+  distinct()
+  
+# extract combinations that are unique
+unique_combos <- 
+  resightings %>% 
+  
+  # remove all combos without a distinct set of rings (i.e., needs at most 4 X's)
+  filter(str_count(code, "X") < 5) %>% 
+  
+  # remove all combos with uncertainty (i.e., no ?'s)
+  filter(str_detect(code, "\\?", negate = TRUE)) %>%
+  
+  # remove all combos without the appropriate number of rings
+  filter(nchar(code) == 11) %>% 
+  
+  # extract the combos that have only one metal ring associate with them
+  group_by(code) %>% 
+  summarise(n_obs = n_distinct(ring)) %>% 
+  arrange(desc(n_obs)) %>% 
+  filter(n_obs == 1)
+
+resightings <- 
+  resightings %>% 
+  
+  # subset resightings to only include observations of unique combinations
+  filter(code %in% unique_combos$code) %>% 
+  
+  # remove all combos that don't have a ring associated with them
+  filter(!is.na(ring)) %>% 
+  
+  # sort by ring and year to assess the output
+  arrange(ring, year)
+```
+***
+Tidy up capture and resight data
+
+```{r tidy capture and resight data}
+capture_final <- 
+  captures %>%
+  
+  # paste ring and year together to make a unique identifier for this observation
+  unite(ring_year, ring, year, remove = FALSE) %>%
+  
+  # specify as a capture
+  mutate(observation = "capture") %>%
+  
+  # clean up output
+  dplyr::select(ring_year, sex, ring, year, recruit, birth, observation) %>% 
+  arrange(ring, year)
+
+resightings_final <- 
+  resightings %>%
+  
+  # paste ring and year together to make a unique identifier for this observation
+  unite(ring_year, ring, year, remove = FALSE) %>%
+  
+  # specify as a resight
+  mutate(observation = "resight") %>%
+  
+  # clean up output
+  dplyr::select(ring_year, ring, year, observation) %>% 
+  
+  # join with the capture data to merge recruit status, sex, and birth year
+  left_join(., dplyr::select(capture_final, ring, recruit, birth, sex), by = "ring") %>% 
+  
+  # remove duplicates
+  distinct()
+```
+***
+Bind capture and resight data into a complete encounter history
+
+```{r bind captures and resights}
+encounter_histories <- 
+  bind_rows(capture_final, resightings_final) %>% 
+  arrange(ring_year)
+```
+***
+Remove resight encounters that occured prior to the first capture
+
+```{r clean incorrect resights}
+# determine the year of first capture for each individual
+first_cap <- 
+  capture_final %>%
+  group_by(ring) %>%
+  filter(as.numeric(year) == min(as.numeric(year))) %>%
+  dplyr::select(ring, year) %>%
+  distinct(ring,.keep_all = TRUE) %>%
+  rename(first_cap = year) %>% 
+  arrange(first_cap)
+
+# determine which resights occured before the first capture
+resights_before_first_capture <- 
+  encounter_histories %>% 
+  left_join(., first_cap, by = "ring") %>% 
+  filter(observation == "resight" & (as.numeric(year) < as.numeric(first_cap)))
+
+# function that does the opposite of "%in%"
+`%!in%` = Negate(`%in%`)
+
+# exclude early resightings from encounter history
+encounter_histories <-
+  encounter_histories %>% 
+  filter(ring_year %!in% resights_before_first_capture$ring_year) %>% 
+  arrange(ring, as.numeric(year))
+```
+***
+Make the encounter history table needed for the survival analysis
+
+```{r compose encounter history table}
+encounter_history_table <- 
+  distinct(encounter_histories, ring_year, .keep_all = TRUE) %>% 
+  dplyr::select(ring, year) %>%
+  arrange(ring) %>% 
+  mutate(year = as.integer(year)) %>%
+  CensusToCaptHist(ID = .$ring,
+                   d = .$year, 
+                   timeInt = "Y") %>% 
+  mutate(ring = rownames(.),
+         ID = as.character(ID))
+```
+***
+Extract the known birth and death information for each individual
+
+```{r birth and death matrix}
+birth_death_mat <- 
+  encounter_histories %>%
+  dplyr::select(ring, birth) %>%
+  mutate(death = 0) %>%
+  arrange(ring) %>%
+  distinct(ring, .keep_all = TRUE)
+```
+***
+Unite the encounter history table with the birth and death matrices
+
+```{r lifetable}
+life_table <-
+  left_join(birth_death_mat, encounter_history_table, by = "ring") %>%
+  as.data.frame() %>% 
+  distinct() %>% 
+  dplyr::select(ID, birth, death,
+                "2006", "2007", "2008", "2009",
+                "2010", "2011", "2012", "2013", 
+                "2014", "2015", "2016", "2017",
+                "2018", "2019", ring) %>%
+  mutate_at(vars(-ring), as.numeric) %>% 
+  mutate(sum_years = rowSums(.[4:17])) %>%
+  filter(sum_years > 1 | birth == 0) %>%
+  mutate(ID = as.numeric(row.names(.))) %>%
+  dplyr::select(-sum_years)
+```
+***
+Summarise the encounter history sampling distribution
+
+```{r lifetable summary}
+life_table %>% 
+  mutate(sum_years = rowSums(.[4:17])) %>%
+  arrange(desc(sum_years)) %>% 
+  summarise(avg_obs = mean(sum_years),
+            sd_obs = sd(sum_years),
+            med_obs = median(sum_years),
+            min_obs = min(sum_years),
+            max_obs = max(sum_years)) %>% 
+  collect() %>%
+  kable(col.names = c("Avg. no. encounters",
+                      "SD no. encounters",
+                      "Med. no. encounters",
+                      "Min. no. encounters",
+                      "Max. no. encounters")) %>%
+  kable_styling() %>%
+  scroll_box(width = "100%")
+```
+***
+Run "DataCheck" BaSTA function to make final cleans to encounter history. The only change needed is that the birth year of recruits should be '0' instead of '1'; this function will solve this issue and provide a cleaned version ready for analysis. In total, we have 811 encounters of 400 individually marked females that were seen as adults, of which 41 are of known birth year.
+```{r DataCheck lifetable}
+BaSTA_checked_life_table_females_final <- 
+  DataCheck(object = life_table[, -c(length(life_table))], 
+            studyStart = 2006, studyEnd = 2019,
+            autofix = rep(1, 7), silent = FALSE)
+```
+
+```{r save datacheck lifetable, eval = FALSE, echo = FALSE}
+save(BaSTA_checked_life_table_females_final,
+     file = "data/BaSTA_checked_life_table_females.rds")
+load(file = "data/BaSTA_checked_life_table_females.rds")
+```
+***
+<br><br>
+
+## BaSTA model selection
+
+Run the multibasta function to fit all possible survival trends to the data, while specifiying the study start year at 2006, study end year at 2019, 800000 iterations, burnin of 10000, thinning everying 2000th iteration, 4 parallel chains, and a minimum age of 1 (i.e., our mark-recapture data only includes individuals that are either adults of unknown age (age >= 1), or individuals that were born locally but were encountered in subsequent years (ie., first-year survival = 1.0)).
+
+```{r run BaSTA analysis, eval = FALSE}
+
+multiout_females <-
+  multibasta(object = BaSTA_checked_life_table_females$newData,
+             studyStart = 2006, studyEnd = 2019, covarsStruct = "fused", 
+             minAge = 1, niter = 800000, burnin = 10000, thinning = 2000,
+             nsim = 4, parallel = TRUE, ncpus = 4, updateJumps = TRUE)
+```
+
+```{r save BaSTA output, eval = FALSE, echo = FALSE}
+save(multiout_females,
+     file = "R_objects/multibasta_females_min_age_1.rds")
+```
+
+```{r load BaSTA output, echo = FALSE}
+load(file = "R_objects/multibasta_females_min_age_1.rds")
+```
+***
+DIC model selection shows that the Logistic mortality model with bathtub shape fits our data the best
+```{r BaSTA DIC table, echo = FALSE}
+table_S1 <- 
+  multiout_females$DICs %>% 
+  as.data.frame() %>% 
+  mutate(model = ifelse(model == "LO", "Logistic",
+                        ifelse(model == "WE", "Weibull",
+                               ifelse(model == "GO", "Gompertz", "Exponential"))),
+         shape = paste0(toupper(substr(shape, 1, 1)), 
+                        substr(shape, 2, nchar(.)))) %>% 
+  mutate(shape = ifelse(shape == "Simp", "Simple", shape)) %>% 
+  dplyr::select(model, shape, k, DICdiff) %>% 
+  gt() %>% 
+  cols_label(model = "Mortality function",
+             shape = "Shape",
+             k = md("***k***"),
+             # DIC = md("*DIC*"),
+             DICdiff = md("\U0394*DIC*")) %>% 
+  fmt_number(columns = vars(DICdiff),
+             decimals = 2,
+             use_seps = FALSE) %>% 
+  tab_options(column_labels.font.weight = "bold",
+              table.width = pct(50),
+              column_labels.font.size = 14,
+              table.font.size = 12,
+              data_row.padding = 5) %>% 
+  fmt_missing(columns = 3,
+              missing_text = "")
+```
+
+```{r table 1, echo = FALSE}
+table_S1
+```
+
+```{r save DIC table, eval = FALSE, echo = FALSE}
+
+table_S1 %>% 
+  gtsave("table_S1.rtf", path = "results/tables/", expand = 1)
+```
+***
+Extract top model
+```{r extract top survival model}
+plover_survival_model <- 
+  multiout_females$runs[[1]]
+```
+
+Check the diagnostics to assess the simulation performance
+```{r plot Bayesian diagnostics, echo = FALSE, message = FALSE}
+Fig_S1a <- 
+  plover_survival_model$coefficients %>% 
+  as.data.frame() %>% 
+  dplyr::select(SerAutocor) %>% 
+  mutate(coeffs = rownames(.)) %>% 
+  ggplot() +
+  geom_col(aes(x = coeffs, y = SerAutocor)) +
+  scale_y_continuous(limits = c(-1, 1)) +
+  ylab("Serial autocorrelation within chain") +
+  theme(legend.position = "none",
+        axis.title.x = element_blank(),
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_blank())
+
+Fig_S1b <- 
+  plover_survival_model$convergence %>% 
+  as.data.frame() %>% 
+  dplyr::select(Rhat) %>% 
+  mutate(coeffs = rownames(.)) %>% 
+  ggplot() +
+  geom_hline(yintercept = 1, color = "red") +
+  geom_point(aes(x = coeffs, y = Rhat), size = 2) +
+  scale_y_continuous(limits = c(0.9, 1.1)) +
+  ylab("Chain convergence (R-hat)") +
+  xlab("Coefficient") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+Serial autcorrelation: values should hover around zero...good!
+Convergence: values should hover around one...good!
+```{r fig S1ab, echo = FALSE, fig.width = 4, fig.height = 8, message = FALSE}
+Fig_S1 <-
+  ggarrange(Fig_S1a,
+            Fig_S1b, 
+            nrow = 2, align = "v",
+            heights = c(0.45, 0.55))
+Fig_S1
+```
+
+```{r save fig S1ab, eval = FALSE, echo = FALSE, fig.width = 4, fig.height = 10}
+
+ggsave(plot=Fig_S1,
+  filename = here("results/figures/Fig_S1ab.pdf"),
+    width = 4,
+    height = 6, 
+    units = "in",
+    device = cairo_pdf)
+```
+
+Trace plot: should look like a hairy catepillar instead of a snake...good!
+```{r fig S1c, echo = FALSE, fig.width = 6, fig.height = 10}
+plot(plover_survival_model)
+```
+
+```{r save fig S1c, eval = FALSE, echo = FALSE}
+Fig_S1c <-
+pdf("results/figures/Fig_S1c.pdf",
+     width = 6,
+     height = 8)
+plot(plover_survival_model)
+dev.off()
+```
+***
+Plot age-specific female survival probability and mortality rate for the Logistic mortality model with bathtub shape.
+```{r plot top model setup, echo = FALSE}
+female_survival_plot <-
+  t(plover_survival_model$survQuant$noCov) %>% 
+  as.data.frame() %>% 
+  mutate(age = as.numeric(rownames(.))) %>% 
+  ggplot() +
+  geom_line(aes(x = age, y = `50%`), linetype = "dashed", color = "#7570B3") +
+  geom_ribbon(aes(x = age, ymin = `2.5%`, ymax = `97.5%`), 
+              color = "#7570B3", fill = "#7570B3", alpha = 0.4) +
+  scale_y_continuous(limits = c(0, 1)) +
+  ylab("Survival probability ± 95% CI") +
+  xlab("Age (years)") +
+  scale_x_continuous(limits = c(1, 12), breaks = c(1:12)) +
+  theme(legend.position = "none",
+        axis.title.x = element_blank(),
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_blank())
+
+female_mortality_plot <-
+  t(plover_survival_model$mortQuant$noCov) %>% 
+  as.data.frame() %>% 
+  mutate(age = as.numeric(rownames(.))) %>% 
+  ggplot() +
+  geom_line(aes(x = age, y = `50%`), linetype = "dashed", color = "#7570B3") +
+  geom_ribbon(aes(x = age, ymin = `2.5%`, ymax = `97.5%`), 
+              color = "#7570B3", fill = "#7570B3", alpha = 0.4) +
+  ylab("Mortality hazard ± 95% CI") +
+  xlab("Age (years)") +
+  scale_x_continuous(limits = c(1, 12), breaks = c(1:12))
+
+recruit_ages_obs <-
+  life_table %>% 
+  filter(birth != 0) %>%
+  unite(ch, `2006`:`2019`) %>% 
+  mutate(ch = str_remove_all(ch, "_")) %>% 
+  mutate(ch2 = gsub("(?<![0-9])0+", "", ch, perl = TRUE))
+
+recruit_ages_obs$ch3 <- 
+  sapply(strsplit(recruit_ages_obs$ch2, split = ""), 
+         function(str) {paste(rev(str), collapse = "")})
+
+recruit_ages_obs <- 
+  recruit_ages_obs %>% 
+  mutate(ch4 = gsub("(?<![0-9])0+", "", ch3, perl = TRUE))
+
+recruit_ages_obs <- 
+  recruit_ages_obs %>% 
+  mutate(age_obs = nchar(ch4)-1) %>% 
+  dplyr::select(ring, age_obs) %>%
+  arrange(desc(age_obs))
+
+recruit_ages_freq <- 
+  expand.grid(as.character(life_table[which(life_table$birth != 0), 
+                                           "ring"]), c(0:11)) %>% 
+  rename(ring = Var1,
+         age = Var2) %>% 
+  left_join(recruit_ages_obs, by = "ring") %>% 
+  filter(age <= age_obs) %>% 
+  arrange(ring)
+
+recruit_ages_freq_totals <- 
+  recruit_ages_freq %>%
+  group_by(age) %>%
+  summarize(total = n()) %>% 
+  bind_rows(., data.frame(age = 12, total = 0))
+
+recruit_ages_freq_plot <-
+  recruit_ages_freq %>%
+  filter(age != 0) %>% 
+  ggplot() +
+  geom_histogram(aes(age), alpha = 0.3, color = "grey40", fill = "#7570B3", 
+                 binwidth = 1, position = "identity") +
+  geom_text(aes(x = age, y = total + 5, label = total, fill = NULL),
+            data = recruit_ages_freq_totals,
+            size = 3, family = "Franklin Gothic Book", fontface = "italic") +
+  theme(panel.border = element_blank(),
+        axis.title.x = element_blank(),
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_blank()) +
+  scale_x_continuous(limits = c(0.5, 12.5), breaks = c(1:12)) +
+  ylab("Frequency") +
+  annotate(geom = "text", y = 30, x = 8,
+           label = "Frequency distribution of observations\n of known-aged females",
+           color = "black", size = 3, fontface = 'italic')
+  
+# draw the three panels together for Fig S1
+Fig_1 <-
+  ggarrange(recruit_ages_freq_plot,
+            # female_survival_plot, 
+            female_mortality_plot, 
+            nrow = 2, align = "v",
+            heights = c(0.4, 0.6),
+            widths = c(0.5, 2.25))
+```
+
+```{r plot top model, fig.height = 6, fig.width = 5, echo = FALSE}
+Fig_1
+```
+
+```{r save plot top model, eval = FALSE, echo = FALSE}
+ggsave(plot=Fig_1,
+  filename = "results/figures/Fig_1.pdf",
+    width = 5,
+    height = 4, 
+    units = "in",
+    device = cairo_pdf)
+```
+***
+Wrangle the estimated birth year and age-at-death for each individual given the BaSTA output
+```{r extract estimated birth years}
+BaSTA_births <- 
+  t(plover_survival_model$birthQuant) %>% 
+  as.data.frame() %>% 
+  mutate(ID = row.names(.)) %>% 
+  rename(est_b = `50%`,
+         upper_b = `97.5%`,
+         lower_b = `2.5%`)
+
+BaSTA_death_ages <- 
+  t(plover_survival_model$agesQuant) %>% 
+  as.data.frame() %>% 
+  mutate(ID = row.names(.)) %>% 
+  rename(est_d = V1,
+         upper_d = `97.5%`,
+         lower_d = `2.5%`)
+
+BaSTA_ages <-
+  life_table %>% 
+  dplyr::select(ID, ring) %>%
+  mutate(ID = as.character(ID)) %>% 
+  left_join(., BaSTA_births, by = "ID") %>% 
+  left_join(., BaSTA_death_ages, by = "ID") %>% 
+  dplyr::select(-ID)
+```
+
+```{r observations from 2004, echo = FALSE}
+BaSTA_ages <- 
+  BaSTA_ages %>% 
+  
+  # manually add the known births for CA2036 and CA1526 (first ringed as chicks 
+  # during a small study in 2004)
+  mutate(est_b = ifelse(ring %in% c("CA2036", "CA1526"), 2004, est_b),
+         lower_b = ifelse(ring %in% c("CA2036", "CA1526"), 2004, lower_b),
+         upper_b = ifelse(ring %in% c("CA2036", "CA1526"), 2004, upper_b)) %>% 
+  
+  # manually change the estimated birth and death of CA1579 by one year (this
+  # individual was first ringed as an adult during the small study in 2004)
+  mutate(est_b = ifelse(ring == "CA1579", est_b - 1, est_b),
+         lower_b = ifelse(ring == "CA1579", lower_b - 1, lower_b),
+         upper_b = ifelse(ring == "CA1579", upper_b - 1, upper_b),
+         est_d = ifelse(ring == "CA1579", est_d + 1, est_d),
+         lower_d = ifelse(ring == "CA1579", lower_d + 1, lower_d),
+         upper_d = ifelse(ring == "CA1579", upper_d + 1, upper_d))
+```
+
+```{r environment cleanup, eval = FALSE, echo = FALSE}
+# clean up environment
+rm(list = setdiff(ls(), c("Ceuta_OPEN", "encounter_histories", "plover_date_convert", "BaSTA_ages")))
+```
+
+# Part 2: Senescence of egg volume
+
+Here we extract a subset of the population that has at least 3 years of repeated measures of egg volume and merge the estimated ages of the BaSTA analysis. Then we use a mixed-model framework to seperate population-average and within-individual age effect, while controlling for selective appearance and disappearence. Finally, we conduct a posthoc peak-performance analysis to identify at which age egg volume starts to senesce.
+
+<br><br>
+
+## Data wrangling
+```{r data import, message = FALSE}
+# join relevant capture data with nest data and subset to captures of adult females
+nest_caps_F <-
+  dbReadTable(Ceuta_OPEN, "Captures") %>%
+  dplyr::select("ID", "ring", "sex", "age", "date") %>% 
+  left_join(., dbReadTable(Ceuta_OPEN, "Nests"), by = "ID") %>% 
+  filter(sex == "F" & age == "A")
+
+# standardize the lay date information
+nest_caps_F <-
+  nest_caps_F %>% 
+  
+  # set dates as numeric
+  mutate(nest_initiation_date = as.numeric(nest_initiation_date),
+         end_date = as.numeric(end_date),
+         found_date = as.numeric(found_date)) %>% 
+  
+  mutate(date = ifelse(nest_initiation_date == "NANA",
+                                         NA, nest_initiation_date)) %>%
+  mutate(date = as.numeric(ifelse(!is.na(date), date,
+                                  ifelse(!is.na(found_date), found_date, date))),
+         year = as.factor(year)) %>%
+  
+  # change to as.Date format
+  plover_date_convert() %>%
+  
+  # specify the lay date as the nest initiation date. If this is unknown, then
+  # subtract 25 days from the end date if the nest hatched. If this isnt the case,
+  # then subtract 11 days from the found date if the float score of the first 
+  # egg is "F". If this isn't the case, then take the found date.
+  mutate(lay_date = 
+           as.Date(
+           ifelse(!is.na(nest_initiation_date), nest_initiation_date,
+            ifelse((!is.na(end_date) & fate == "Hatch"), end_date - 25, 
+             ifelse((!is.na(found_date) & float1 == "F"), found_date - 11,
+              ifelse(!is.na(found_date), found_date, NA)))), 
+           origin = "1970-01-01")) %>% 
+  mutate(lay_date =
+             as.Date(ifelse(!is.na(found_date), found_date, NA), 
+                     origin = "1970-01-01")) %>% 
+  
+  # create a julian lay date
+  mutate(jul_lay_date = as.numeric(format(lay_date, "%j"))) %>% 
+  
+  # remove any duplicated rows resulting from joining above
+  distinct() %>% 
+  
+  mutate(
+  # scale the julian lay date by year
+    jul_std_date = scale_by(jul_lay_date ~ year, .)) %>%
+
+  # remove any rows without lay date information
+  filter(!is.na(jul_std_date))
+
+# extract females that have non-NA egg dimensions and have at least 3 repeated measures
+n_years_3 <- 
+  nest_caps_F %>% 
+  filter(!is.na(width1) & !is.na(length1)) %>% 
+  group_by(ring) %>% 
+  summarise(n_measures = n_distinct(year)) %>% 
+  filter(n_measures > 2)
+
+# subset to females that have non-NA egg dimensions and have at least 3 repeated measures
+# and specify lay date based on nest_initiation_date if available (if not, then take
+# found_date. Note: for eggs found at float stage F that didn't hatch, it is impossible
+# to back-calculate the lay date, and thus the found_date is the best we have available)
+nest_caps_F_3 <-
+  nest_caps_F %>% 
+  filter(ring %in% n_years_3$ring) %>% 
+  dplyr::select(c(ID, ring, year, jul_lay_date, jul_std_date,
+                  width1, length1, 
+                  width2, length2, 
+                  width3, length3))
+
+# extract dimensions of egg 1
+nest_caps_F_3_egg1 <- 
+  nest_caps_F_3 %>% 
+  dplyr::select(ID, ring, year, jul_lay_date, jul_std_date, 
+                width1, length1) %>% 
+  rename(width = width1,
+         length = length1) %>% 
+  mutate(egg = "egg1")
+
+# extract dimensions of egg 2
+nest_caps_F_3_egg2 <- 
+  nest_caps_F_3 %>% 
+  dplyr::select(ID, ring, year, jul_lay_date, jul_std_date, 
+                width2, length2) %>% 
+  rename(width = width2,
+         length = length2) %>% 
+  mutate(egg = "egg2")
+
+# extract dimensions of egg 3
+nest_caps_F_3_egg3 <- 
+  nest_caps_F_3 %>% 
+  dplyr::select(ID, ring, year, jul_lay_date, jul_std_date, 
+                width3, length3) %>% 
+  rename(width = width3,
+         length = length3) %>% 
+  mutate(egg = "egg3")
+
+# bind all egg measurements and remove NA observations
+eggdf <- 
+  bind_rows(nest_caps_F_3_egg1, 
+            nest_caps_F_3_egg2, 
+            nest_caps_F_3_egg3) %>% 
+  filter(!is.na(width) | !is.na(length)) %>% 
+  
+  # calculate egg volume
+  mutate(eggv = 0.486 * length * width^2,
+         year = as.integer(as.character(year))) %>% 
+  
+  # sort by ring and nest ID and remove duplicated rows
+  arrange(ring, ID) %>% 
+  distinct() %>% 
+  
+  # remove nest 2017_C_6 (parentage unclear)
+  filter(ID != "2017_C_6") %>% 
+  
+  # remove CN0232 and CA2334 (only two years of data after removal of 2017_C_6)
+  filter(ring != "CN0232" & ring != "CA2334") %>% 
+  
+  # merge with basta age estimates
+  left_join(., BaSTA_ages, by = "ring") %>% 
+  
+  mutate(
+    # calculate the estimated age at a given year
+    est_age = year - est_b,
+    
+    # calculate upper and lower 95% CI for age at a given year
+    est_age_lower = year - upper_b,
+    est_age_upper = year - lower_b,
+    
+    est_death_age = upper_d) %>% 
+  
+  # remove duplicate rows and extraneous columns
+  distinct()
+
+# Determine the age at first capture for females in the data
+age_at_first_cap_info <- 
+  dbReadTable(Ceuta_OPEN, "Captures") %>%
+  filter(ring %in% eggdf$ring) %>%
+  plover_date_convert() %>%
+  group_by(ring) %>%
+  summarise(age_first_cap = age[which.min(date)],
+            year_first_cap = as.numeric(year[which.min(year)])) %>%
+  collect() %>% 
+  
+  # manually assign J to CA2036 and CA1526 which were captured as chicks during 
+  # the small study in 2004
+  mutate(age_first_cap = ifelse(ring %in% c("CA2036", "CA1526"), "J", age_first_cap))
+
+# join the age at first capture info to the data
+eggdf <- 
+  left_join(eggdf, age_at_first_cap_info, 
+            by = "ring") %>% 
+  mutate(year_first_cap = ifelse(age_first_cap == "J", est_b, year_first_cap)) %>% 
+  mutate(conservative_age = year - year_first_cap)
+
+# join polyandry information
+eggdf_mating_sys_all <-
+  dbReadTable(Ceuta_OPEN, "BirdRef") %>% 
+  dplyr::select(year, ID, male, female) %>%
+  filter(female %in% eggdf$ring) %>% 
+  arrange(female) %>%
+  group_by(female, year) %>%
+  summarise(n_mates = n_distinct(male, na.rm = TRUE)) %>% 
+  mutate(polyandry = ifelse(n_mates > 1, "poly", "mono"),
+         year = as.integer(year),
+         n_mates = ifelse(n_mates == 0, 1, n_mates)) %>% 
+  rename(ring = female)
+
+matings_without_egg_obs <- 
+  anti_join(eggdf_mating_sys_all, eggdf, 
+            by = c("ring", "year")) %>% 
+  left_join(., dplyr::select(eggdf, ring, age_first_cap, est_b), by = "ring") %>% 
+  mutate(est_age = year - est_b) %>% 
+  distinct()
+
+eggdf <-
+  left_join(eggdf, eggdf_mating_sys_all,
+            by = c("ring", "year"))
+```
+
+```{r save egg df, eval = FALSE, echo = FALSE}
+save(eggdf,
+     file = "data/egg_volume_data_2006_2019.rds")
+```
+
+```{r load egg df, echo = FALSE}
+load(file = "data/egg_volume_data_2006_2019.rds")
+```
+
+***
+Mean number of mates per year per individual
+```{r mating summary}
+# Create the function.
+getmode <- function(v) {
+   uniqv <- unique(v)
+   uniqv[which.max(tabulate(match(v, uniqv)))]
+}
+
+# average number of mates per year
+eggdf_mating_sys_summary <- 
+  eggdf_mating_sys_all %>% 
+  group_by(ring) %>% 
+  summarise(mean_n_mates_per_year = mean(n_mates),
+            median_n_mates_per_year = median(n_mates),
+            modal_mating_strategy = getmode(polyandry))
+
+# grand mean mates per female per year
+mean(eggdf_mating_sys_summary$mean_n_mates_per_year)
+
+# grand median mates per female per year
+median(eggdf_mating_sys_summary$median_n_mates_per_year)
+
+# boxplot of mates per female per year
+boxplot(eggdf_mating_sys_summary$mean_n_mates_per_year)
+```
+
+***
+
+<br><br>
+
+## Plot of sample population
+This plot visualizes the 51 females used in our senscence analysis. The thin grey lines indicate the age period for which we have encountered an individual (note that the starting age from each individual is based on the mean estimate of an individual's birth year estimated from the BaSTA package above). The thick light grey lines in back show the lower 95% CI of the BaSTA age of first encounter. The black points show the data used in our analysis, with the size of each point corresponding to the number of clutches laid by a given female in a given year.
+
+```{r visualize sample sizes, echo = FALSE, message = FALSE, warning = FALSE}
+# extract the first and last observaions of each individual
+max_min_obs <-
+  encounter_histories %>% 
+  filter(ring %in% eggdf$ring) %>% 
+  left_join(., dplyr::select(BaSTA_ages, ring, est_b), by = "ring") %>%
+  mutate(est_age = as.numeric(year) - as.numeric(est_b)) %>% 
+  group_by(ring) %>% 
+  summarise(min_age = min(est_age),
+            max_age = max(est_age),
+            obs_span = max(est_age) - min(est_age)) %>% 
+  as.data.frame() %>% 
+  left_join(., dplyr::select(eggdf, ring, age_first_cap)) %>% 
+  distinct()
+
+# manually adjust the ages of CA1526 and CA2036 to reflect their first encounter
+# during the 2004 pilot study as chicks (i.e., aged 0)
+max_min_obs[which(max_min_obs$ring %in% c("CA1526", "CA2036")), "min_age"] <-
+  c(0, 0)
+
+# manually adjust the min age estimate of CA1579 to relect that it was first
+# encountered as an adult during the 2004 pilot study (i.e., subtract 2 years
+# from BaSTA estimate of age at first encounter)
+max_min_obs[which(max_min_obs$ring == "CA1579"), "min_age"] <-
+  max_min_obs[which(max_min_obs$ring == "CA1579"), "min_age"] - 2
+max_min_obs[which(max_min_obs$ring == "CA1579"), "obs_span"] <-
+  max_min_obs[which(max_min_obs$ring == "CA1579"), "max_age"] -
+  max_min_obs[which(max_min_obs$ring == "CA1579"), "min_age"]
+
+# specify the factor levels according to the rank (for plotting)
+max_min_obs$ring_ordered <- 
+  factor(max_min_obs$ring, 
+         levels = unique(max_min_obs$ring[order(max_min_obs$min_age, 
+                                                max_min_obs$obs_span, 
+                                                decreasing = TRUE)]), 
+         ordered = TRUE)
+
+# calculate the number of clutches per year for each individual and join back to 
+# ranked dataframe
+eggdf_clutches <- 
+  eggdf %>% 
+  dplyr::group_by(ring, year) %>%
+  dplyr::summarise(n_clutches = n_distinct(ID)) %>% 
+  dplyr::right_join(dplyr::select(max_min_obs, 
+                                  c(ring, min_age, obs_span, age_first_cap)), 
+                    by = "ring") %>% 
+  dplyr::right_join(dplyr::select(eggdf, c(ring, year, est_age, n_mates)), 
+                    by = c("ring", "year")) %>% 
+  distinct() %>% 
+  mutate(polyandry = ifelse(n_mates > 1, "2", "1"))
+
+# specify the factor levels according to the rank (for plotting)
+eggdf_clutches$ring_ordered <- 
+  factor(eggdf_clutches$ring, 
+         levels = unique(eggdf_clutches$ring[order(eggdf_clutches$min_age, 
+                                                   eggdf_clutches$obs_span, 
+                                                       decreasing = TRUE)]), 
+         ordered = TRUE)
+
+# create a ranking variable and confidence interval limits of age estimate
+eggdf_n_upper <-
+  eggdf %>%
+    dplyr::group_by(ring) %>%
+    dplyr::summarise(CI_age = max(est_death_age))
+
+
+eggdf_age_CI <-
+  eggdf %>%
+  dplyr::group_by(ring) %>%
+  dplyr::summarise(CI_age = 1) %>%
+  dplyr::bind_rows(eggdf_n_upper) %>%
+  mutate(ring = as.factor(ring)) %>% 
+  arrange(ring) %>% 
+  dplyr::left_join(., dplyr::select(max_min_obs, 
+                                    c(ring, min_age, obs_span, age_first_cap)))
+
+# specify the factor levels according to the rank (for plotting)
+eggdf_age_CI$ring_ordered <- 
+  factor(eggdf_age_CI$ring, 
+         levels = unique(eggdf_age_CI$ring[order(eggdf_age_CI$min_age, 
+                                                 eggdf_age_CI$obs_span,
+                                                     decreasing = TRUE)]), 
+         ordered = TRUE)
+
+# specify point size for number of clutches per year
+point_size <- c(1, 2, 3)
+point_colors <- c("black", "#f03b20")
+
+# create the first captured as adult plot
+Imm_plot <-
+  ggplot2::ggplot() +
+  geom_line(data = filter(eggdf_age_CI, age_first_cap == "A"),
+            aes(x = CI_age, y = ring_ordered), color = "grey90",
+            size = 2.5, lineend = "round") +
+  geom_linerange(data = filter(max_min_obs, age_first_cap == "A"),
+                 orientation = "y", aes(y = ring_ordered, x = min_age,
+                                        xmin = min_age, xmax = max_age),
+                 size = 0.85, color = "grey60") +
+  geom_point(data = filter(eggdf_clutches, age_first_cap == "A"), 
+             aes(x = est_age, y = ring_ordered, size = as.factor(n_clutches), 
+                 fill = as.factor(polyandry)), shape = 21) +
+  geom_point(data = filter(matings_without_egg_obs, age_first_cap == "A"), 
+             aes(x = est_age, y = ring), size = 2, shape = 4) +
+  scale_x_continuous(limits = c(0, 23),
+                     breaks = c(0:23)) +
+  ylab("Individuals first captured as adults") +
+  xlab("Age ± 95% CI") +
+  theme(legend.position = c(0.78, 0.8),
+        legend.title = element_text(size = 9)) +
+  scale_size_manual(values = point_size) +
+  scale_fill_manual(values = point_colors) +
+  labs(size = "Number of clutches observed",
+       fill = "Number of mates observed")
+
+# create the recruit plot
+Rec_plot <- 
+  ggplot2::ggplot() +
+  geom_linerange(data = filter(max_min_obs, age_first_cap == "J"), 
+                 orientation = "y", aes(y = ring_ordered, x = min_age,
+                                        xmin = min_age, xmax = max_age), 
+                 size = 0.85, color = "grey60") +
+  geom_point(data = filter(eggdf_clutches, age_first_cap == "J"), 
+             aes(x = est_age, y = ring_ordered, size = as.factor(n_clutches), 
+                 fill = as.factor(polyandry)), shape = 21) +
+  geom_point(data = filter(matings_without_egg_obs, age_first_cap == "J"), 
+             aes(x = est_age, y = ring), size = 2, shape = 4) +
+  scale_x_continuous(limits = c(0, 23),
+                     breaks = c(0:23)) +
+  ylab("Local recruits") +
+  xlab("Age") +
+  theme(legend.position = "none",
+        axis.title.x = element_blank(),
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_blank()) +
+  scale_size_manual(values = point_size) +
+  scale_fill_manual(values = point_colors)
+
+
+# draw the two panels together for Fig 1
+Fig_2 <- 
+  ggarrange(Rec_plot, Imm_plot, nrow = 2, align = "v",
+            heights = c(0.19, 0.81))
+```
+
+```{r figure 2, fig.height = 10, fig.width = 8, echo = FALSE}
+Fig_2
+```
+
+```{r save figure 2, eval = FALSE, echo = FALSE}
+ggsave(Fig_2, 
+       filename = "results/figures/Fig_2.pdf", 
+       width = 5,
+       height = 7, units = "in",
+       device = cairo_pdf)
+```
+
+```{r environment cleanup2, eval = FALSE, echo = FALSE}
+# clean up environment
+rm(list = setdiff(ls(), c("eggdf", "Ceuta_OPEN", "plover_date_convert", "max_min_obs", "nest_caps_F")))
+```
+
+```{r lay date distribution plot, eval = FALSE, echo = FALSE}
+eggdf %>%
+  dplyr::select(jul_lay_date, jul_std_date, year) %>% 
+  distinct() %>% 
+  ggplot() + 
+  geom_histogram(aes(jul_std_date), alpha = 0.3, color = "grey40", 
+                 fill = "#7570B3", binwidth = 1, position = "identity") + 
+  facet_wrap(year ~ ., ncol = 5) +
+  ylab("Frequency") +
+  xlab("Standardized julian date")
+```
+
+```{r summary stats of sample population, echo = FALSE}
+# Number of recruits and unknown adults
+eggdf %>% 
+  group_by(age_first_cap) %>% 
+  summarise(n_distinct(ring)) %>% 
+  collect() %>%
+  kable(col.names = c("Age at first encounter",
+                      "Frequency of individuals")) %>%
+  kable_styling() %>%
+  scroll_box(width = "50%")
+
+# frequency of min ages of unknown adults
+eggdf %>% 
+  filter(age_first_cap == "A") %>% 
+  group_by(ring) %>% 
+  summarise(first_age = min(est_age)) %>% 
+  mutate(first_age = as.factor(first_age)) %>% 
+  group_by(first_age) %>% 
+  tally() %>% 
+  kable(col.names = c("Age at first egg measure",
+                      "Frequency of individuals")) %>%
+  kable_styling() %>%
+  scroll_box(width = "50%")
+
+# yearly nesting interval
+eggdf %>% 
+  group_by(ring) %>% 
+  summarise(obs_period = max(est_age) - min(est_age) + 1,
+            n_years = n_distinct(year)) %>% 
+  mutate(obs_interval = obs_period/n_years) %>% 
+  ungroup() %>% 
+  summarise(avg_interval = mean(obs_interval),
+            sd_interval = sd(obs_interval),
+            med_interval = median(obs_interval)) %>% 
+  collect() %>%
+  kable(col.names = c("Average interval",
+                      "SD interval",
+                      "Median interval")) %>%
+  kable_styling() %>%
+  scroll_box(width = "50%")
+
+# average tenure in the population
+max_min_obs %>% 
+  summarise(avg_tenure = mean(obs_span + 1),
+            sd_tenure = sd(obs_span + 1),
+            min_tenure = min(obs_span + 1),
+            max_tenure = max(obs_span + 1)) %>% 
+  collect() %>%
+  kable(col.names = c("Average tenure",
+                      "SD tenure",
+                      "Min. tenure",
+                      "Max. tenure")) %>%
+  kable_styling() %>%
+  scroll_box(width = "75%")
+```
+***
+
+<br><br>
+
+## Sample check
+Here we double check the sample to make sure that each individual and nest meets our criteria
+```{r sample size, echo = FALSE}
+# tally number of nests with 1, 2, or 3 eggs (should have maximum of 3)
+eggdf %>% 
+  group_by(ID) %>% 
+  summarise(n_eggs = n()) %>% 
+  mutate(n_eggs = as.factor(n_eggs)) %>% 
+  group_by(n_eggs) %>% 
+  tally() %>% 
+  collect() %>%
+  kable(col.names = c("Clutch size",
+                      "Frequency of nests")) %>%
+  kable_styling() %>%
+  scroll_box(width = "50%")
+
+# tally number of individuals with 3, 4, etc. years of observations (should have minimum of 3)
+eggdf %>% 
+  group_by(ring) %>% 
+  summarise(n_years = n_distinct(year)) %>% 
+  mutate(n_years = as.factor(n_years)) %>% 
+  group_by(n_years) %>% 
+  tally() %>% 
+  collect() %>%
+  kable(col.names = c("Number of years",
+                      "Frequency of individuals")) %>%
+  kable_styling() %>%
+  scroll_box(width = "50%")
+
+# tally number of individuals with a total of x nests in the sample (should have minimum of 3)
+eggdf %>% 
+  group_by(ring) %>% 
+  summarise(n_measures = n_distinct(ID)) %>% 
+  mutate(n_measures = as.factor(n_measures)) %>% 
+  group_by(n_measures) %>% 
+  tally() %>% 
+  collect() %>%
+  kable(col.names = c("Number of nests",
+                      "Frequency of individuals")) %>%
+  kable_styling() %>%
+  scroll_box(width = "50%")
+
+# total sample sizes of dataset
+eggdf %>% 
+  summarise(Years = n_distinct(year),  # N = 13 years
+            Individuals = n_distinct(ring),    # N = 51 females
+            Nests = n_distinct(ID),    # N = 270 nests
+            Eggs = nrow(.)) %>% 
+  t(.) %>% 
+  as.data.frame() %>% 
+  rename(n = V1) %>% 
+  collect() %>%
+  kable(col.names = c("Sample size")) %>%
+  kable_styling() %>%
+  scroll_box(width = "50%")
+
+# tally egg obeservations over age groups
+eggdf %>% 
+  group_by(est_age) %>% 
+  summarise(n_eggs = n(),
+            n_nests = n_distinct(ID),
+            n_individuals = n_distinct(ring)) %>% 
+  as.data.frame() %>% 
+  ungroup() %>% 
+  mutate(est_age = as.numeric(est_age) + 1) %>% 
+  collect() %>%
+  kable(col.names = c("Age",
+                      "Observations (i.e., Eggs)",
+                      "Nests",
+                      "Individuals")) %>%
+  kable_styling() %>%
+  scroll_box(width = "70%")
+
+# age distribution
+eggdf %>% 
+  group_by(ring) %>% 
+  summarise(max_age = max(est_age) + 1,
+            min_age = min(est_age) + 1,
+            avg_age = mean(est_age + 1)) %>% 
+  mutate(age_span = max_age - min_age) %>% 
+  ungroup() %>% 
+  summarise(max_age = max(max_age),
+            min_age = min(min_age),
+            grand_avg_max_age = mean(max_age),
+            grand_avg_min_age = mean(min_age),
+            grand_avg_avg_age = mean(avg_age),
+            grand_median_age_span = median(age_span + 1),
+            grand_avg_age_span = mean(age_span + 1),
+            max_age_span = max(age_span) + 1,
+            min_age_span = min(age_span) + 1,
+            sd_age_span = sd(age_span)) %>% 
+  t() %>% 
+  as.data.frame() %>% 
+  ungroup() %>% 
+  rename(value = V1) %>%
+  collect() %>%
+  kable() %>% 
+  kable_styling() %>%
+  scroll_box(width = "70%")
+  
+# tally egg obeservations over age groups
+eggdf %>% 
+  group_by(ring) %>% 
+  summarise(n_years = n_distinct(year)) %>% 
+  ungroup() %>% 
+  summarise(avg_obs_per_individual = mean(n_years),
+            median_obs_per_individual = median(n_years),
+            max_obs_per_individual = max(n_years),
+            min_obs_per_individual = min(n_years),
+            sd_obs_per_individual = sd(n_years)) %>% 
+  t() %>% 
+  as.data.frame() %>% 
+  ungroup() %>% 
+  collect() %>%
+  rename(value = V1) %>%
+  kable() %>% 
+  kable_styling() %>%
+  scroll_box(width = "70%")
+```
+***
+Here we summarise for each individual the 1) age of first encounter, 2) the age of last encounter, 3) the average age encountered, 4) the standardized ages of encounter within each individual, and 5) the upper and lower 95% age estimates from BaSTA for these four measures.
+
+```{r add age info}
+# add average, first, and last age information to each ring
+age_summary <- 
+  function(df){
+  
+  # extract the average, first, and last age for each individual
+  ring_Age <- 
+    df %>%
+    dplyr::select(ring, est_age, conservative_age, 
+                  est_age_lower, est_age_upper) %>%
+    distinct() %>% 
+    group_by(ring) %>% 
+    summarise(firstage = min(est_age) - 1,
+              conservative_firstage = min(conservative_age),
+              firstage_lower = min(est_age_lower),
+              firstage_upper = min(est_age_upper),
+              lastage = max(est_age) - 1,
+              conservative_lastage = max(conservative_age),
+              lastage_lower = max(est_age_lower),
+              lastage_upper = max(est_age_upper))
+  
+  # merge with dataframe
+  df2 <- 
+    left_join(df, ring_Age, by = "ring") %>% 
+    mutate(est_age = est_age - 1,
+           conservative_age = ifelse(age_first_cap == "J", 
+                                     conservative_age - 1, 
+                                     conservative_age),
+           conservative_firstage = ifelse(age_first_cap == "J", 
+                                          conservative_firstage - 1, 
+                                          conservative_firstage),
+           conservative_lastage = ifelse(age_first_cap == "J", 
+                                         conservative_lastage - 1, 
+                                         conservative_lastage))
+  
+  
+  return(df2)
+
+}
+
+eggdf <- 
+  age_summary(df = eggdf) %>% 
+  mutate(year = as.factor(year),
+         ID = as.factor(ID),
+         ring = as.factor(ring)) %>% 
+  distinct()
+```
+
+***
+
+<br><br>
+
+## Model selection of within-individual variation in egg volume across age, season, and in relation to polyandry 
+
+### model 0: Null
+```{r model 0, message = FALSE}
+mod0 <- lmer(eggv ~ 1 + 
+               (1|ring/ID),
+             data = eggdf)
+```
+
+Using Dingemanse et al. (JAE, 2020; DOI: 10.1111/1365-2656.13122) method to control for selective appearance and disappearance by setting first and last age observed as fixed effects
+
+### model 1: Quadratic lay date
+```{r, message = FALSE}
+mod1 <- lmer(eggv ~ poly(jul_std_date, 2) + 
+               (1|ring/ID),
+             data = eggdf)
+```
+
+### model 2: Age and Quadratic lay date
+```{r, message = FALSE}
+mod2 <- lmer(eggv ~ est_age + firstage + lastage + 
+                poly(jul_std_date, 2) +
+               (1|ring/ID),
+             data = eggdf)
+```
+
+### model 3: Senescence and Quadratic lay date
+```{r, message = FALSE}
+mod3 <- lmer(eggv ~ poly(est_age, 2) + firstage + lastage + 
+                poly(jul_std_date, 2) +
+               (1|ring/ID),
+             data = eggdf)
+```
+
+### model 4: Quadratic lay date and Polyandry
+```{r, message = FALSE}
+mod4 <- lmer(eggv ~ poly(jul_std_date, 2) + 
+                polyandry +
+               (1|ring/ID),
+             data = eggdf)
+```
+
+### model 5: Age and Quadratic lay date and Polyandry
+```{r, message = FALSE}
+mod5 <- lmer(eggv ~ est_age + firstage + lastage + 
+                poly(jul_std_date, 2) + 
+                polyandry +
+                (1|ring/ID),
+              data = eggdf)
+```
+
+### model 6: Senescence and Quadratic lay date and Polyandry
+```{r, message = FALSE}
+mod6 <- lmer(eggv ~ poly(est_age, 2) + firstage + lastage + 
+                poly(jul_std_date, 2) + 
+                polyandry +
+               (1|ring/ID),
+             data = eggdf)
+```
+
+```{r table 2 model structure, echo = FALSE}
+mod_names_fixef <- 
+  data.frame(fixeffect = c("Null",
+                           "Quadratic lay date",
+                           "Age + Quadratic lay date",
+                           "Senescence + Quadratic lay date",
+                           "Quadratic lay date + Polyandry",
+                           "Age + Season + Polyandry",
+                           "Senescence + Quadratic lay date + Polyandry"),
+             model = c("mod0", "mod1", "mod2", "mod3",
+                       "mod4", "mod5", "mod6"))
+```
+***
+Calculate marginal and conditional R-squared statistics following Nakagawa and Schielzeth (Equ. 29 and 30 and Table 2; 2013).
+```{r marginal r-squared function}
+model_list <- 
+  list(mod0, mod1, mod2, mod3, 
+       mod4, mod5, mod6)
+mR2_list <- lapply(model_list, function(x) r2_nakagawa(x))
+mR2_list <- lapply(mR2_list, function(x) unlist(x))
+mR2_list <- lapply(mR2_list, function(x) as.data.frame(x))
+
+R2_estimates <- 
+  data.frame(condR2 = c(unlist(lapply(mR2_list, function(x) x$x[1]))),
+             margR2 = c(unlist(lapply(mR2_list, function(x) x$x[2]))),
+             model = c("mod0", "mod1", "mod2", "mod3",
+                       "mod4", "mod5", "mod6"))
+```
+***
+Table 2. Model selection by AICc.
+```{r build table 2, echo = FALSE}
+table_1 <-
+  AICc(mod0, mod1, mod2, mod3, 
+       mod4, mod5, mod6) %>% 
+  mutate(model = row.names(.),
+         deltaAICc = AICc - min(AICc),
+         AICcWt = Weights(AICc)) %>% 
+  arrange(AICc) %>% 
+  mutate(ER = AICcWt[1]/AICcWt) %>% 
+  collect() %>%
+  left_join(., mod_names_fixef, by = "model") %>% 
+  left_join(., R2_estimates, by = "model") %>% 
+  dplyr::select(fixeffect, df, AICcWt, deltaAICc, condR2, margR2) %>% 
+  gt() %>% 
+  cols_label(fixeffect = "Predictors of egg volume",
+             df = md("***k***"),
+             AICcWt = md("***w***"),
+             deltaAICc = md("\U0394*AIC*"),
+             condR2 = md("*R<sup>2</sup><sub>conditional</sub>*"),
+             margR2 = md("*R<sup>2</sup><sub>marginal</sub>*")) %>% 
+  fmt_number(columns = vars(deltaAICc, AICcWt,
+                            condR2, margR2),
+             decimals = 2,
+             use_seps = FALSE) %>% 
+  tab_options(column_labels.font.weight = "bold",
+              table.width = pct(80),
+              column_labels.font.size = 14,
+              table.font.size = 12,
+              data_row.padding = 5) %>% 
+  cols_align(align = "left",
+             columns = vars(fixeffect))
+```
+
+```{r table 2, echo = FALSE}
+table_1
+```
+
+```{r, eval = FALSE, echo = FALSE}
+table_1 %>% 
+  gtsave("table_1.rtf", path = "results/tables/")
+```
+***
+
+<br><br>
+
+## The top model
+
+Take a closer look at fixed effects of top model.
+```{r fixed effect vizualization}
+# check model components
+
+# quadratic senescence effect
+plot(effect("poly(est_age, 2)", mod6))
+
+# selective appearance effect
+plot(effect("firstage", mod6))
+
+# selective disappearance effect
+plot(effect("lastage", mod6))
+
+# quadratic lay date effect
+plot(effect("poly(jul_std_date, 2)", mod6))
+
+# polyandry effect
+plot(effect("polyandry", mod6))
+```
+
+```{r residual plot}
+# visualize residuals of top model
+Fig_S2 <- 
+  ggplot(augment(mod6), aes(x = .fitted, y = .resid)) + 
+  geom_point(alpha = 0.5) +
+  geom_hline(yintercept = 0, 
+             linetype = "dashed", color = "grey") +
+  ylab("Residual") +
+  xlab("Fitted value")
+```
+
+```{r display Fig S2, echo = FALSE}
+Fig_S2
+```
+
+```{r save Fig S2, eval = FALSE, echo = FALSE}
+ggsave(Fig_S2,
+       filename = "results/figures/Fig_S2.pdf",
+       width = 4,
+       height = 4, units = "in",
+       device= cairo_pdf)
+```
+
+```{r multicollinearity vizualization}
+ggpairs(mod6,
+        columns = c("est_age", "firstage", "lastage", 
+                    "jul_std_date", "polyandry"))
+```
+
+```{r multicollinearity testing}
+# VIF function for lmer models (taken from: https://github.com/aufrank/R-hacks/blob/master/mer-utils.R)
+vif.lme <- function (fit) {
+    ## adapted from rms::vif
+    v <- vcov(fit)
+    nam <- names(fixef(fit))
+    ## exclude intercepts
+    ns <- sum(1 * (nam == "Intercept" | nam == "(Intercept)"))
+    if (ns > 0) {
+        v <- v[-(1:ns), -(1:ns), drop = FALSE]
+        nam <- nam[-(1:ns)] }
+    d <- diag(v)^0.5
+    v <- diag(solve(v/(d %o% d)))
+    names(v) <- nam
+    v }
+
+vif.lme(mod6) # all VIF statistics are < 2 so there is no evidence of collinearity
+```
+
+```{r laydate vs age}
+# is lay date confounded by age (i.e., does lay date vary with age and thus complicate the senescence effect)?
+# first extract the first nests of each individual for each year
+nest1_IDs <- 
+  nest_caps_F %>% 
+  group_by(ring, year) %>% 
+  arrange(ring, year, jul_std_date) %>%
+  distinct() %>% 
+  slice(1)
+
+# subset to remove outliers
+eggdf_first_nests <- 
+  eggdf %>% 
+  filter(ID %in% nest1_IDs$ID) %>% 
+  dplyr::select(est_age, year, ring, jul_std_date, firstage, lastage, polyandry) %>%
+  distinct()
+
+laydate_age_quad <- 
+  lmer(jul_std_date ~ poly(est_age, 2) + firstage + lastage + polyandry +
+         (1|ring),
+       data = eggdf_first_nests)
+plot(effect("poly(est_age, 2)", laydate_age_quad))
+
+laydate_age_linear <- 
+  lmer(jul_std_date ~ est_age + firstage + lastage + polyandry +
+         (1|ring),
+       data = eggdf_first_nests)
+plot(effect("est_age", laydate_age_linear))
+
+# strong effect of polyandry on laydate of first nests:
+# When an individual is polyandrous in a given year, their first nest will be
+# much earlier than those that are monogamous in a given year. This makes sense.
+plot(effect("polyandry", laydate_age_quad)) 
+
+plot(est_age ~ jul_std_date, data = eggdf_first_nests) # no apparent relationship
+cor(x = eggdf_first_nests$est_age, y = eggdf_first_nests$jul_std_date) # R2 = 0.02
+```
+
+```{r polyandry vs age}
+# is age confounded by polyandry (i.e., does age vary with liklihood to be polyandrous and thus complicate the senescence effect)?
+agedf <-
+  eggdf %>%
+  dplyr::select(ring, year, est_age, firstage, lastage, polyandry, jul_std_date) %>%
+  distinct() %>% 
+  mutate(polyandry = as.factor(polyandry))
+
+poly_age_linear <- 
+  glmer(polyandry ~ est_age + firstage + lastage + 
+       (1|ring) + (1|year), data = agedf, family = "binomial")
+
+summary(poly_age_linear)
+
+poly_age_null <- 
+  glmer(polyandry ~  firstage + lastage + 
+       (1|ring) + (1|year), data = agedf, family = "binomial")
+
+AIC(poly_age_linear, poly_age_null) # difference from null
+
+plot(effect("est_age", poly_age_linear)) # no apparent relationship
+xtabs(~polyandry + est_age, data = agedf) # no apparent relationship
+```
+
+```{r polyandry and age on egg volume}
+# no interaction between polyandry and age on eggv
+mod_poly_x_age <- lmer(eggv ~ polyandry * poly(est_age, 2) + 
+                         firstage + lastage + poly(jul_std_date, 2) +
+               (1|ring/ID), data = eggdf)
+plot(effect("polyandry * poly(est_age, 2)", mod_poly_x_age))
+AIC(mod_poly_x_age, mod6) # vastly worse fit...more evidence of no relationship
+```
+***
+
+<br><br>
+
+## Obtaining posterior distributions of model components
+Here we retrieve mean and credible intervals for fixed effects, random effects, and residual variance of mod. Then we create separate table for each model component. This essentially reproduces the model estimate table in Table 1 of Dingemanse et al. (JAE, 2020; DOI: 10.1111/1365-2656.13122) (code within this chunk is adapted from code provided by Niels Dingemanse on March 6, 2020)
+
+First simulate posteriors of the model parameters. Note, we put a constraint on the quadratic terms, such that only simulated model estimates producing a peak >= 1 and <= 11 are accepted. Our rationale for doing this is that these are the ages of our dataset and are thus biologically meaningful.
+```{r simulate posteriors, eval = FALSE}
+# set seed to make simulation reproducable
+set.seed(14)
+
+# specify the number of simulations you would like to produce
+n_sim = 5000
+
+# respecify model with quadratic components broken into the linear and polynomial terms
+mod6 <- lmer(eggv ~ est_age + I(est_age^2) + firstage + lastage + 
+                jul_std_date + I(jul_std_date^2) + polyandry +
+               (1|ring/ID) + (1|year),
+             data = eggdf)
+
+# create a sim object containing all the components of mod6
+mod6_sim <- sim(mod6, n.sim = n_sim)
+
+# Simulate posterior distribution of model estimates. Only accept simulated
+# model estimates which produce a peak >= 1 and <= 11 (these are the ages
+# of our dataset and are thus biologically meaningful)
+for (i in 1:n_sim) {
+  
+  # set peak age to 0 at start of each loop
+  bsim_peak_age <- 0
+  
+  # set attempt to 0 at start of each loop
+  attempt <- 0
+  
+  # store simulated estimates only if peak >= 1 and <= 10 and it's less than
+  # 100 attempts
+  while( (bsim_peak_age < 1 | bsim_peak_age > 10) && attempt <= 100 ) {
+    
+    # next attempt
+    attempt <- attempt + 1
+    
+    # simulate an estimate
+    try(
+      mod6_sim_try <- sim(mod6, n.sim = 1)
+    )
+    
+    # store calculated peak (i.e., the apex of the polynomial curve)
+    try(
+      bsim_peak_age <- (-(mod6_sim_try@fixef[, 2]) / (2 * mod6_sim_try@fixef[, 3]))
+    )
+  }
+  # store fixed effects
+  mod6_sim@fixef[i, ] <- mod6_sim_try@fixef
+  
+  # store random effect for nest (only 3 simulated values needed as there
+  # are only 3 eggs per nest)
+  if(i < 4){
+    mod6_sim@ranef$`ID:ring`[i, , ] <- mod6_sim_try@ranef$`ID:ring`
+  }
+  else{
+    # store other random effects
+    mod6_sim@ranef$ring[i, , ] <- mod6_sim_try@ranef$ring
+    mod6_sim@ranef$year[i, , ] <- mod6_sim_try@ranef$year
+    
+    # store residual
+    mod6_sim@sigma[i] <- mod6_sim_try@sigma
+  }
+}
+
+```
+***
+Retrieve all random effect estimates (mean, credible intervals)
+```{r retrieve random effects, eval = FALSE}
+
+# speficy column names of the sim object as the names of the model components
+colnames(mod6_sim@fixef) <- 
+  names(fixef(mod6))
+
+# Retrieve all random effect estimates (mean, credible intervals) 
+# simultaneously
+coef_ranef_mod6 <- 
+  lapply(ranef(mod6_sim), function(x) c(mean(apply(x[, , 1], 1, var)),  
+                                    quantile(apply(x[, , 1], 1, var), 
+                                             prob = c(0.025, 0.975))))
+
+# Transpose the random effects table
+ranefTable <- 
+  as.data.frame(t(as.data.frame(coef_ranef_mod6))) %>%
+  rownames_to_column("coefName")
+```
+***
+Retrieve all fixed effect estimates (mean, credible intervals)
+```{r retrieve fixed effects, eval = FALSE}
+# Retrieve all fixed effect estimates (mean, credible intervals) 
+# simultaneously 
+coef_fixef_mod6 <- 
+  rbind(apply(mod6_sim@fixef, 2, mean), 
+        apply(mod6_sim@fixef, 2, quantile, 
+              prob = c(0.025, 0.975)))
+
+# Transpose the fixed effects table
+fixefTable <- 
+  as.data.frame(t(as.data.frame(coef_fixef_mod6))) %>%
+  rownames_to_column("coefName")
+```
+***
+Calculate adjusted repeatabilities
+```{r calculate adjusted repeatabilities, eval = FALSE}
+# Retrieve residual variance estimate (mean, credible intervals)
+coef_res_mod6 <- 
+  c(mean(mod6_sim@sigma^2), quantile(mod6_sim@sigma^2, c(0.025, 0.975)))
+
+# Transpose the residual effects table
+resTable <- 
+  as.data.frame(t(as.data.frame(coef_res_mod6))) %>%
+  mutate(coefName = "residual")
+
+# Calculate total phenotypic variance not explained by fixed effects
+ranefAndResidualAseggdf <- 
+  cbind(as.data.frame(lapply(ranef(mod6_sim), 
+                             function(x) apply(x[, , 1], 1, var))), 
+        residual = mod6_sim@sigma^2)
+
+ranefAndResidualAseggdf$varTotal <- 
+  rowSums(ranefAndResidualAseggdf)
+
+# Express each random effect as proportion of total (rpt)
+rpt_each <- 
+  ranefAndResidualAseggdf %>%
+  mutate_at(vars( -varTotal), funs(./varTotal)) %>% 
+  suppressWarnings()
+
+coef_rpt_all <- 
+  apply(rpt_each, 2, 
+        function(x) c(mean (x), quantile (x, prob = c(0.025, 0.975))))
+
+coefRptTable <- 
+  as.data.frame(t(coef_rpt_all)) %>%
+  rownames_to_column("coefName") %>%
+  filter(!coefName %in% c("varTotal"))
+```
+***
+Retrieve peak performance estimates
+```{r retrieve peak performance estimates, eval = FALSE}
+# Calculate the traits' value at peak performance and store in table
+ypeak_mod <- 
+  mod6_sim@fixef[, 1] - ((mod6_sim@fixef[, 2])^2 / (4 * mod6_sim@fixef[, 3]))
+
+coef_ypeak_mod <- 
+  c(mean(ypeak_mod), quantile(ypeak_mod, c(0.025,0.975)))
+
+coefYpeakTable <- 
+  as.data.frame(cbind(coefName = "Egg volume at peak", 
+                      as.data.frame(t(as.data.frame(coef_ypeak_mod)))))
+
+# Calculate the age at peak performance and store in table
+xpeak_mod <- 
+  -(mod6_sim@fixef[, 2]) / (2 * mod6_sim@fixef[, 3])
+
+coef_xpeak_mod <- 
+  c(mean(xpeak_mod), quantile(xpeak_mod, c(0.025, 0.975)))
+
+coefXpeakTable <- 
+  as.data.frame(cbind(coefName = "Age at peak", 
+                      as.data.frame(t(as.data.frame(coef_xpeak_mod)))))
+```
+
+```{r calculate age differences, eval = FALSE}
+# Calculate the difference between age 0 and 1 expected from (age+age^2) and 
+# Min_Age (if mirrored is their sum).
+difAgeMin_mod <- 
+  mod6_sim@fixef[, 2] + mod6_sim@fixef[, 3] + mod6_sim@fixef[, 4]
+
+coef_difAgeMin_mod <- 
+  c(mean(difAgeMin_mod), quantile(difAgeMin_mod, c(0.025, 0.975)))
+
+coefdifAgeMinTable <- 
+  as.data.frame(cbind(coefName = "DifAgeMin", 
+                      as.data.frame(t(as.data.frame(coef_difAgeMin_mod)))))
+```
+
+## Posthoc peak performance analysis
+
+```{r peak analysis, eval = FALSE}
+# create data that contains all factor levels and covariate means to use for
+# calculating predictions
+new_data <- expand.grid(est_age = seq(0:max(eggdf$est_age)) - 1,
+                        PrePeak_mod = c("1","0"),
+                        firstage = mean(eggdf$firstage),
+                        lastage = mean(eggdf$lastage),
+                        jul_std_date = mean(eggdf$jul_std_date),
+                        polyandry = c("mono", "poly"))
+
+# create an empty list to store for-loop output
+bs.predictions <- list(
+  
+  # peak values from previous simulation
+  peaks = xpeak_mod,
+  
+  # age-specific predictions
+  predictions = matrix(ncol = n_sim, nrow = nrow(new_data)),
+  
+  # slope of pre-peak effect
+  PrePeak_age_effect = matrix(ncol = n_sim, nrow = 1),
+  
+  # slope of post-peak effect
+  PostPeak_age_effect = matrix(ncol = n_sim, nrow = 1))
+
+# for-loop to run peak analysis on all simulated posteriors above
+for (i in 1:n_sim) {
+  
+  # start loop with mod6peak as NULL and attempt as 0
+  mod6peak <- NULL
+  attempt <- 0
+  
+  # store model output and predictions only if mod6peak converged (i.e., is not
+  # NULL) and it's less than 100 attempts
+  while(is.null(mod6peak) && attempt <= 100) {
+    
+    # next attempt
+    attempt <- attempt + 1
+
+    # set peak based on the mean estimate from the previous simulation
+    eggdf$PrePeak_mod[eggdf$est_age < (ceiling(bs.predictions$peaks[i]) + 1)] <- "0"
+    eggdf$PrePeak_mod[eggdf$est_age > ceiling(bs.predictions$peaks[i])] <- "1"
+    
+    try(
+      # run peak analysis (i.e., now the quadratic effect is broken up into two
+      # pieces reflective of the pre- and post-peak sections of the curve)
+      mod6peak <- 
+        lmer(formula = eggv ~ PrePeak_mod + est_age * PrePeak_mod + 
+               firstage + lastage + as.numeric(jul_std_date) + 
+               I(as.numeric(jul_std_date)^2) + polyandry +
+               (1|ring/ID) + (1|year),
+               data = eggdf)
+    )
+
+    try(
+      # calculate predictions from model
+      bs.predictions$predictions[, i] <- 
+        predict(mod6peak, new_data, re.form = NA)
+    )
+    
+  }
+  
+  # calculate the slope of the pre-peak age effect (i.e., because pre-peak is 
+  # set as the baseline level of the factor, this is simply the baseline age 
+  # slope)
+  bs.predictions$PrePeak_age_effect[i] <- 
+    ifelse("PrePeak_mod1:est_age" %in% 
+             row.names(summary(mod6peak)$coefficients), 
+           summary(mod6peak)$coefficients["est_age","Estimate"],
+           NA)
+  
+  # calculate the slope of the post-peak age effect (i.e., because pre-peak is 
+  # set as the baseline level of the factor, this is calculated as the baseline 
+  # age slope plus the interaction slope)
+  bs.predictions$PostPeak_age_effect[i] <- 
+    ifelse("PrePeak_mod1:est_age" %in% 
+             row.names(summary(mod6peak)$coefficients), 
+           summary(mod6peak)$coefficients["est_age","Estimate"] + 
+             summary(mod6peak)$coefficients["PrePeak_mod1:est_age","Estimate"],
+           NA)
+
+}
+```
+***
+Retrieve pre- and post-peak age effects
+```{r retrieve peak age effects, eval = FALSE}
+# Retrieve pre-peak age estimate (mean, credible intervals)
+coefPrePeakAgeTable <- 
+  data.frame(coefName = "Pre-peak age effect",
+             mean_estimate = mean(bs.predictions$PrePeak_age_effect, 
+                                  na.rm = TRUE),
+             lower95 = quantile(bs.predictions$PrePeak_age_effect, 
+                                prob = c(0.025), na.rm = TRUE),
+             upper95 = quantile(bs.predictions$PrePeak_age_effect, 
+                                prob = c(0.975), na.rm = TRUE), 
+             row.names = 1)
+
+# Retrieve post-peak age estimate (mean, credible intervals)
+coefPostPeakAgeTable <- 
+  data.frame(coefName = "Post-peak age effect",
+             mean_estimate = mean(bs.predictions$PostPeak_age_effect, 
+                                  na.rm = TRUE),
+             lower95 = quantile(bs.predictions$PostPeak_age_effect, 
+                                prob = c(0.025), na.rm = TRUE),
+             upper95 = quantile(bs.predictions$PostPeak_age_effect, 
+                                prob = c(0.975), na.rm = TRUE), 
+             row.names = 1)
+```
+***
+Compile all results into one table
+```{r model summary table, eval = FALSE}
+# Retrieve sample sizes
+sample_sizes <-
+  eggdf %>% 
+  summarise(Year = n_distinct(year),
+            Individual = n_distinct(ring),
+            Nests = n_distinct(ID),
+            Observations = nrow(eggdf))
+sample_sizes <- 
+  as.data.frame(t(as.data.frame(sample_sizes))) %>%
+  rownames_to_column("coefName") %>% 
+  rename(mean_estimate = V1)
+
+
+# clean model component names
+mod_comp_names <- 
+  data.frame(comp_name = c("Intercept",
+                           "Linear age",
+                           "Quadratic age",
+                           "First age",
+                           "Last age",
+                           "Linear lay date",
+                           "Quadratic lay date",
+                           "Polyandry",
+                           "Nest / Individual",
+                           "Individual",
+                           "Year",
+                           "Residual",
+                           "Nest / Individual",
+                           "Individual",
+                           "Year",
+                           "Residual",
+                           "Egg volume at peak",
+                           "Age at peak",
+                           "Pre-peak age effect",
+                           "Post-peak age effect",
+                           "Years",
+                           "Individuals",
+                           "Nests",
+                           "Observations (i.e., Eggs)"))
+
+# Store all parameters into a single table and clean it up
+allCoefs_mod <- 
+  bind_rows(fixefTable, 
+            ranefTable, 
+            resTable,
+            coefRptTable,
+            coefYpeakTable,
+            coefXpeakTable) %>% 
+  rename(lower95 = `2.5%`,
+         upper95 = `97.5%`,
+         mean_estimate = V1) %>% 
+  bind_rows(.,
+            coefPrePeakAgeTable,
+            coefPostPeakAgeTable,
+            sample_sizes) %>%
+  bind_cols(.,
+            mod_comp_names) %>% 
+  # back-transform the age at peak estimate to the correct age at first reproduction
+  mutate(mean_estimate = ifelse(coefName == "Age at peak", mean_estimate + 1, mean_estimate),
+         lower95 = ifelse(coefName == "Age at peak", lower95 + 1, lower95),
+         upper95 = ifelse(coefName == "Age at peak", upper95 + 1, upper95)) %>% 
+  mutate(coefString = ifelse(!is.na(lower95),
+                             paste0("[", 
+                             round(lower95, 2), ", ", 
+                             round(upper95, 2), "]"),
+                             NA),
+         effect = c(rep("Fixed effects \U1D6FD", nrow(fixefTable)),
+                    rep("Random effects \U1D70E\U00B2", nrow(ranefTable)),
+                    rep("Random effects \U1D70E\U00B2", nrow(resTable)),
+                    rep("Adjusted Repeatability \U1D45F", nrow(coefRptTable)),
+                    rep("Peak Performance \U1D6FD", nrow(coefYpeakTable)),
+                    rep("Peak Performance \U1D6FD", nrow(coefXpeakTable)),
+                    rep("Pre-/post-peak analysis \U1D6FD", nrow(coefPrePeakAgeTable)),
+                    rep("Pre-/post-peak analysis \U1D6FD", nrow(coefPostPeakAgeTable)),
+                    rep("Sample sizes \U1D45B", nrow(sample_sizes)))) %>%
+  dplyr::select(effect, everything())
+
+# re-organize model components for table
+allCoefs_mod <- 
+  allCoefs_mod[c(c(1:8), 10, 9, 11, 12, 14, 13, 15, 16, c(17:24)), ]
+```
+***
+Wrangle predicted values for each iteration of the simulation proceedure (for visual purposes)
+```{r plotting, eval = FALSE}
+# expand new data across the 5000 simulations for binding to predictions
+new_data_expanded <-
+  data.frame(new_data)[rep(seq_len(nrow(data.frame(new_data))), n_sim), ]
+
+# wrangle predicted values of simulation for plotting
+predicted_values <-
+  
+  # melt the predictions and peaks of the simulation and merge each dataframe
+  left_join(melt(bs.predictions$predictions), 
+            data.frame(value = melt(bs.predictions$peaks),
+                       Var2 = c(1:n_sim)), 
+            by = "Var2") %>%
+  
+  # add the new_data levels to each iteration's vector of predictions
+  bind_cols(., new_data_expanded) %>% 
+
+  # rename columns
+  rename(iteration = Var2,
+         eggv = value.x,
+         peak_age = value.y) %>% 
+    
+  # remove unneeded columns
+  dplyr::select(-Var1) %>% 
+
+  # filter dataframe so that each iteration only contains pre- and post-peak 
+  # predictions that are within the peak
+  filter((PrePeak_mod == "0" & est_age < (ceiling(peak_age) + 1)) |
+           (PrePeak_mod == "1" & est_age > ceiling(peak_age)))
+```
+***
+Store model output
+```{r collate model output, eval = FALSE}
+results_mod6 <- list(mod6_posteriors = mod6_sim,
+                      mod6_peak_analysis_predictions = predicted_values,
+                      mod6_summary_table = allCoefs_mod)
+```
+
+```{r save model output, eval = FALSE, echo = FALSE}
+save(results_mod6,
+     file = "R_objects/results_mod6.rds")
+```
+
+```{r load model output, echo = FALSE}
+load("R_objects/results_mod6.rds")
+```
+***
+Produce table of effect sizes in a similar layout to that shown in Table 1 of Dingemanse et al. JAE 2020 (DOI: 10.1111/1365-2656.13122).
+
+```{r model estimates table, echo = FALSE}
+table_S2 <- 
+  results_mod6$mod6_summary_table %>% 
+  dplyr::select(effect, comp_name, mean_estimate, coefString) %>% 
+  gt(rowname_col = "row",
+     groupname_col = "effect") %>% 
+  cols_label(comp_name = "",
+             mean_estimate = "Parameter estimate",
+             coefString = "95% credible interval") %>% 
+  fmt_number(columns = vars(mean_estimate),
+             rows = 1:18,
+             decimals = 2,
+             use_seps = FALSE) %>% 
+  fmt_number(columns = vars(mean_estimate),
+             rows = 19:22,
+             decimals = 0,
+             use_seps = FALSE) %>% 
+  fmt_missing(columns = 1:4,
+              missing_text = "") %>% 
+  cols_align(align = "left",
+             columns = vars(comp_name)) %>% 
+  tab_options(row_group.font.weight = "bold",
+              row_group.background.color = brewer.pal(9,"Greys")[3],
+              table.font.size = 12,
+              data_row.padding = 3,
+              row_group.padding = 4,
+              summary_row.padding = 2,
+              column_labels.font.size = 14,
+              row_group.font.size = 12,
+              table.width = pct(60))
+
+```
+
+```{r save table 3, eval = FALSE, echo = FALSE}
+table_S2 %>% 
+  gtsave("table_S2.rtf", path = "results/tables/")
+table_S2 %>% 
+  gtsave("table_S2.png", path = "results/tables/")
+```
+
+```{r table 3, echo=FALSE}
+image_read(path = "results/tables/table_S2.png")
+```
+
+***
+
+Run the model with "poly(est_age, 2, raw = TRUE)" instead of "est_age + I(est_age^2)" to make plotting the trend line easier
+
+```{r polynomial model fitted values, message = FALSE, eval = FALSE}
+mod6a <-
+  lmer(eggv ~ poly(est_age, 2, raw = TRUE) + firstage + lastage +
+         poly(jul_std_date, 2, raw = TRUE) + polyandry +
+         (1|ring/ID) + (1|year), 
+       data = eggdf)
+
+# extract the fitted values of the polynomial age effect
+mod6a_age_fits <- 
+  as.data.frame(effect("poly(est_age, 2, raw = TRUE)", mod6a, 
+                       xlevels = list(est_age = seq(min(eggdf$est_age), 
+                                                    max(eggdf$est_age), 1))))
+
+# extract the fitted values of the polynomial season effect
+mod6a_season_fits <- 
+  as.data.frame(effect("poly(jul_std_date, 2, raw = TRUE)", mod6a, 
+                       xlevels = list(jul_std_date = seq(min(eggdf$jul_std_date), 
+                                                         max(eggdf$jul_std_date), 0.1))))
+```
+***
+
+<br><br>
+
+## Senescence plot
+
+Here we show the overall results of the analysis. The black line shows the overall quadratic trend of egg volume with age while controlling for selective appearence and dissappearence. The orange lines show the predicted pre-peak trends for each run of the simulation, while the green lines show the same for the post-peak trend. The points in the plot visualise the raw data, with each point being a single egg. The density plot on the top of the figure illustrates the spread of the 'age at peak performance' captured by our simulation proceedure. The vertical dashed line represents the median age of this posterior distribution.
+
+```{r age trend plot code, eval = FALSE, echo = FALSE, fig.height = 6, fig.width = 4}
+# average the polyandry effect for visualization
+peak_analysis_predictions_avg <- 
+  results_mod6$mod6_peak_analysis_predictions %>% 
+  group_by(iteration, PrePeak_mod, est_age) %>% 
+  summarise(eggv = mean(eggv),
+            peak_age = first(peak_age))
+
+# plot the posterior age at peak distribution
+peak_age_plot <- 
+  ggplot(distinct(data.frame(value = 
+                               melt(peak_analysis_predictions_avg$peak_age))), 
+         aes(value + 1)) + 
+  geom_density(alpha = 0.3, color = "grey40", fill = "#7570B3") + 
+  theme_void() +
+  theme(legend.position = "none") +
+  scale_x_continuous(limits = c(0, 14), breaks = c(1:13)) +
+  scale_y_continuous(limits = c(0, 0.5)) +
+  annotate(geom = "text", y = 0.25, x = 8, 
+           label = "Peak age posterior distribution", 
+           color = "black", size = 2.5, fontface = 'italic')
+
+# brewer.pal(6, "Dark2")
+cbPalette <- c("#1B9E77", "#D95F02")
+
+# plot the quadratic effect of age and the pre- and post-peak age effects
+raw_data_plot_age <- 
+  ggplot() +
+  geom_vline(xintercept = median(results_mod6$mod6_peak_analysis_predictions$peak_age) + 1, 
+             linetype = "dashed", color = "grey") +
+  geom_point(data = eggdf, alpha = 0.1,
+             aes(x = est_age + 1, y = eggv), color = "black") +
+  geom_line(data = filter(peak_analysis_predictions_avg, PrePeak_mod == "0"),
+            aes(x = as.numeric(est_age) + 1, y = eggv, group = iteration),
+            lwd = 1, alpha = 0.01, color = "#D95F02") +
+  geom_line(data = filter(peak_analysis_predictions_avg, PrePeak_mod == "0"),
+            aes(x = as.numeric(est_age) + 1, y = eggv, group = iteration),
+            lwd = 1, alpha = 0.01, color = "#D95F02") +
+  geom_line(data = filter(peak_analysis_predictions_avg, PrePeak_mod == "1"),
+            aes(x = as.numeric(est_age) + 1, y = eggv, group = iteration),
+            lwd = 1, alpha = 0.01, color = "#1B9E77") +
+  geom_line(data = filter(peak_analysis_predictions_avg, PrePeak_mod == "1"),
+            aes(x = as.numeric(est_age) + 1, y = eggv, group = iteration),
+            lwd = 1, alpha = 0.01, color = "#1B9E77") +
+  geom_line(data = mod6a_age_fits, aes(x = est_age + 1, y = fit),
+            lwd = 0.5, color = "black") +
+  geom_ribbon(data = mod6a_age_fits, aes(x = est_age + 1, ymax = upper, ymin = lower),
+              lwd = 1, alpha = 0.25) +
+  ylab(expression(paste("Egg volume (mm", ''^{3}, ")" %+-%  "95% CI", sep = ""))) +
+  xlab("Age (years)") +
+  scale_x_continuous(limits = c(0, 14), breaks = c(1:13)) +
+  theme(legend.position = "none") +
+  scale_fill_manual(values = cbPalette) +
+  scale_color_manual(values = cbPalette)
+
+# bind both plots into a grob object
+
+g1 <- gtable_rbind(ggplotGrob(peak_age_plot),
+                   ggplotGrob(raw_data_plot_age))
+
+# function to specify the hieght of each grob object
+set_panel_heights <- 
+  function(g, heights1){
+  g$heights <- grid:::unit.list(g$heights)
+  id_panels <- unique(g$layout[g$layout$name == "panel", "t"])
+  g$heights[id_panels][1] <- heights1[[1]]
+  g$heights[id_panels][2] <- heights1[[2]]
+  g
+  }
+
+# specify heights of grob
+Fig_4 <- 
+  set_panel_heights(g = g1, 
+                    heights1 = list(grid::unit(0.5, "in"), grid::unit(4, "in")))
+```
+
+```{r save age trend plot, eval = FALSE, echo = FALSE}
+ggsave(plot=Fig_4,
+  filename = "results/figures/Fig_4.pdf",
+    width = 5,
+    height = 6, 
+    units = "in",
+    device = cairo_pdf)
+```
+
+```{r Fig 3, echo = FALSE, fig.height = 6, fig.width = 5}
+image_read(path = "results/figures/Fig_4_crop.png")
+```
+
+***
+
+<br><br>
+
+## Season plot
+
+Here we show the overall results of the analysis. The black line shows the overall quadratic trend of egg volume with age while controlling for selective appearence and dissappearence. The orange lines show the predicted pre-peak trends for each run of the simulation, while the green lines show the same for the post-peak trend. The points in the plot visualise the raw data, with each point being a single egg. The density plot on the top of the figure illustrates the spread of the 'age at peak performance' captured by our simulation proceedure. The vertical dashed line represents the median age of this posterior distribution.
+
+```{r season trend plot code, eval = FALSE, echo = FALSE, fig.height = 6, fig.width = 4}
+polyandry_colors <- c("black", "#f03b20")
+
+# plot the posterior age at peak distribution
+polyandry_season_plot <-
+  ggplot(eggdf) + 
+  geom_density(alpha = 0.3, aes(jul_std_date, fill = as.factor(polyandry))) + 
+  theme_void() +
+  theme(legend.position = c(0.85, 0.45),
+        legend.title = element_blank(),
+        legend.direction = "horizontal") +
+  scale_x_continuous(limits = c(-3, 4), breaks = seq(-2.5, 3.5, 0.5)) +
+  scale_y_continuous(limits = c(0, 0.5)) +
+  # geom_hline(yintercept = 0, colour = "white", size = 1) +
+  annotate(geom = "text", y = 0.3, x = -2.5, 
+           label = "Lay date distribution", 
+           color = "black", size = 2.5, fontface = 'italic') +
+  scale_fill_manual(values = polyandry_colors, 
+                    guide = guide_legend(title.position = "top", nrow = 2),
+                    labels = c("Monogamous", "Polyandrous")) +
+  labs(fill = "Number of mates observed")
+
+# plot the quadratic trend, pre- and post-peak trend, and raw data
+raw_data_plot_season <- 
+  ggplot() +
+  geom_point(data = eggdf, alpha = 0.3,
+             aes(x = jul_std_date, y = eggv, fill = as.factor(polyandry)), shape = 21) +
+  geom_line(data = mod6a_season_fits, aes(x = jul_std_date, y = fit),
+            lwd = 0.5, color = "black") +
+  geom_ribbon(data = mod6a_season_fits, aes(x = jul_std_date, ymax = upper, ymin = lower),
+              lwd = 1, alpha = 0.25) +
+  ylab(expression(paste("Egg volume (mm", ''^{3}, ")" %+-% "95% CI", sep = ""))) +
+  xlab("Julian lay date (standardized around annual mean)") +
+  scale_x_continuous(limits = c(-3, 4), breaks = seq(-2.5, 3.5, 0.5)) +
+  theme(legend.position = "none") +
+  scale_fill_manual(values = polyandry_colors)
+
+# bind both plots into a grob object
+
+g1 <- gtable_rbind(ggplotGrob(polyandry_season_plot),                    ggplotGrob(raw_data_plot_season))
+
+# function to specify the hieght of each grob object
+set_panel_heights <- 
+  function(g, heights1){
+  g$heights <- grid:::unit.list(g$heights)
+  id_panels <- unique(g$layout[g$layout$name == "panel", "t"])
+  g$heights[id_panels][1] <- heights1[[1]]
+  g$heights[id_panels][2] <- heights1[[2]]
+  g
+  }
+
+# specify heights of grob
+Fig_5 <- 
+  set_panel_heights(g = g1, 
+                    heights1 = list(grid::unit(1, "in"), grid::unit(4, "in")))
+```
+
+```{r save season trend plot, eval = FALSE, echo = FALSE}
+ggsave(plot=Fig_5,
+  filename = "results/figures/Fig_5.pdf",
+    width = 5,
+    height = 5.5,
+    units = "in",
+    device = cairo_pdf)
+```
+
+```{r Fig 4, echo = FALSE, fig.height = 6, fig.width = 5}
+image_read("results/figures/Fig_5_crop.png")
+```
+
+***
+
+<br><br>
+
+## Effect-size plot
+Here we visualize the effect sizes for all parameters estimated in our model (95% credible intervals are shown around each mean estimate).
+```{r effect size plot code, echo = FALSE, eval = FALSE}
+# plot mean and credible intervals for fixed effects, random effects,
+# residual variance, and peak performance estimates
+
+results_mod6$mod6_summary_table$coefName <- 
+  factor(results_mod6$mod6_summary_table$coefName)                         
+
+plot_fixed_effect_sizes <- 
+  results_mod6$mod6_summary_table %>%
+  filter(effect == "Fixed effects \U1D6FD" & 
+                         coefName != "(Intercept)") %>%
+  mutate(comp_name = fct_relevel(comp_name,
+                                      "Quadratic lay date", "Linear lay date", 
+                                      "Polyandry",
+                                      "Last age", "First age", 
+                                      "Quadratic age", "Linear age")) %>%
+  ggplot() +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "grey") +
+  geom_point(aes(y = comp_name, x = mean_estimate)) +
+  geom_errorbarh(aes(xmin = lower95,
+                     xmax = upper95,
+                     y = comp_name),
+                 height = 0) +
+  theme(axis.title.x = element_blank()) +
+  ylab("Fixed Effects")
+
+plot_random_effect_sizes <- 
+  results_mod6$mod6_summary_table %>%
+  filter(effect == "Random effects \U1D70E\U00B2") %>%
+  mutate(comp_name = fct_relevel(comp_name,
+                                 "Residual", "Year", 
+                                 "Nest / Individual", "Individual")) %>%
+  ggplot() +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "grey") +
+  geom_point(aes(y = comp_name, x = mean_estimate)) +
+  geom_errorbarh(aes(xmin = lower95,
+                     xmax = upper95,
+                     y = comp_name),
+                 height = 0) +
+  theme(axis.title.x = element_blank()) +
+  ylab("Random Effects")
+
+plot_adjusted_repeatability <- 
+  results_mod6$mod6_summary_table %>%
+  filter(effect == "Adjusted Repeatability \U1D45F") %>%
+  mutate(comp_name = fct_relevel(comp_name,
+                                 "Residual", "Year", 
+                                 "Nest / Individual", "Individual")) %>%
+  ggplot() +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "grey") +
+  geom_point(aes(y = comp_name, x = mean_estimate)) +
+  geom_errorbarh(aes(xmin = lower95,
+                     xmax = upper95,
+                     y = comp_name),
+                 height = 0) +
+  theme(axis.title.x = element_blank()) +
+  ylab("Adjusted\nRepeatability")
+
+plot_peak_performance_trait <- 
+  results_mod6$mod6_summary_table %>%
+  filter(coefName == "Egg volume at peak") %>%
+  ggplot() +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "grey") +
+  geom_point(aes(y = coefName, x = mean_estimate)) +
+  geom_errorbarh(aes(xmin = lower95,
+                     xmax = upper95,
+                     y = coefName),
+                 height = 0) +
+  theme(axis.title.y = element_blank(),
+        axis.title.x = element_blank())
+
+plot_peak_performance_age <- 
+  results_mod6$mod6_summary_table %>%
+  filter(coefName == "Age at peak") %>%
+  ggplot() +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "grey") +
+  geom_point(aes(y = coefName, x = mean_estimate)) +
+  geom_errorbarh(aes(xmin = lower95,
+                     xmax = upper95,
+                     y = coefName),
+                 height = 0) +
+  ylab("Peak analysis") +
+  theme(axis.title.x = element_blank())
+
+plot_pre_post_peak_analysis <- 
+  results_mod6$mod6_summary_table %>%
+  filter(effect == "Pre-/post-peak analysis \U1D6FD") %>%
+  ggplot() +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "grey") +
+  geom_errorbarh(aes(xmin = lower95,
+                     xmax = upper95,
+                     y = coefName, color = coefName),
+                 height = 0) +
+  geom_point(aes(y = coefName, x = mean_estimate)) +
+  theme(axis.title.y = element_blank(),
+        axis.title.x = element_blank(), 
+        strip.text.x = element_text("Pre-/post-peak analysis \U1D6FD"),
+        legend.position = "none") +
+  scale_color_manual(values = cbPalette)
+```
+
+```{r effect size plot, fig.height = 8, fig.width = 4, eval = FALSE, echo = FALSE}
+model_effects <- plot_grid(plot_fixed_effect_sizes,
+          plot_random_effect_sizes,
+          plot_adjusted_repeatability, 
+          plot_peak_performance_trait,
+          plot_peak_performance_age, 
+          plot_pre_post_peak_analysis,
+          align = "v", nrow = 6, 
+          rel_heights = c(0.30, 0.19, 
+                          0.19, 0.09, 
+                          0.09, 0.14))
+ggsave(plot=model_effects,
+  filename = "results/figures/Fig_3.pdf",
+    width = 6,
+    height = 8,
+    units = "in",
+    device = cairo_pdf)
+```
+
+```{r Fig 5, echo = FALSE, fig.height = 6, fig.width = 5}
+image_read("results/figures/Fig_3.png")
+```
+
+# Part 3: Checking for the influence of outliers
+Here we rerun the whole simulation procedure on a dataset that remove outlying data (i.e., very old observations from two females). See http://r-statistics.co/Outlier-Treatment-With-R.html
+```{r outlier: remove outliers}
+eggdf_out_rm <- 
+  eggdf %>% 
+  filter(est_age < 9)
+```
+
+```{r outlier: age box plot, eval = FALSE}
+ages <- 
+  eggdf_out_rm %>% 
+  dplyr::select(ring, ID, est_age) %>% 
+  distinct()
+
+boxplot(ages$est_age, boxwex = 0.1)
+boxplot.stats(ages$est_age)$out
+
+
+boxplot(eggdf$est_age, boxwex = 0.1)
+boxplot.stats(eggdf$est_age)$out
+
+boxplot(eggdf$eggv ~ eggdf$est_age, boxwex = 0.4)
+
+cooksd <- cooks.distance(mod6)
+
+plot(cooksd, pch="*", cex=2, main="Influential Obs by Cooks distance")  # plot cook's distance
+abline(h = 4*mean(cooksd, na.rm=T), col="red")  # add cutoff line
+text(x=1:length(cooksd)+1, y=cooksd, labels=ifelse(cooksd>4*mean(cooksd, na.rm=T),names(cooksd),""), col="red")  # add labels
+
+influential <- as.numeric(names(cooksd)[(cooksd > 4*mean(cooksd, na.rm=T))])  # influential row numbers
+head(eggdf[influential, ])
+length(influential)
+```
+
+***
+
+<br><br>
+
+##Obtaining posterior distributions of model components
+
+```{r outlier: simulate posteriors, eval = FALSE}
+# set seed to make simulation reproducable
+set.seed(14)
+
+# specify the number of simulations you would like to produce
+n_sim = 5000
+
+# respecify model with quadratic components broken into the linear and polynomial terms
+mod6_out_rm <- 
+  lmer(eggv ~ est_age + I(est_age^2) + firstage + lastage + 
+         jul_std_date + I(jul_std_date^2) + polyandry + 
+         (1|ring/ID) + (1|year), 
+       data = eggdf_out_rm)
+
+# create a sim object containing all the components of mod6_out_rm
+mod6_out_rm_sim <- sim(mod6_out_rm, n.sim = n_sim)
+
+# Simulate posterior distribution of model estimates. Only accept simulated
+# model estimates which produce a peak >= 1 and <= 5
+for (i in 1:n_sim) {
+  
+  # set peak age to 0 at start of each loop
+  bsim_peak_age <- 0
+  
+  # set attempt to 0 at start of each loop
+  attempt <- 0
+  
+  # store simulated estimates only if peak >= 1 and <= 5 and it's less than
+  # 100 attempts
+  while( (bsim_peak_age < 1 | bsim_peak_age > 7) && attempt <= 100 ) {
+    
+    # next attempt
+    attempt <- attempt + 1
+    
+    # simulate an estimate
+    try(
+      mod6_out_rm_sim_try <- sim(mod6_out_rm, n.sim = 1)
+    )
+    
+    # store calculated peak (i.e., the apex of the polynomial curve)
+    try(
+      bsim_peak_age <- (-(mod6_out_rm_sim_try@fixef[, 2]) / (2 * mod6_out_rm_sim_try@fixef[, 3]))
+    )
+  }
+  # store fixed effects
+  mod6_out_rm_sim@fixef[i, ] <- mod6_out_rm_sim_try@fixef
+  
+  # store random effect for nest (only 3 simulated values needed as there
+  # are only 3 eggs per nest)
+  if(i < 4){
+    mod6_out_rm_sim@ranef$`ID:ring`[i, , ] <- mod6_out_rm_sim_try@ranef$`ID:ring`
+  }
+  else{
+    # store other random effects
+    mod6_out_rm_sim@ranef$ring[i, , ] <- mod6_out_rm_sim_try@ranef$ring
+    mod6_out_rm_sim@ranef$year[i, , ] <- mod6_out_rm_sim_try@ranef$year
+    
+    # store residual
+    mod6_out_rm_sim@sigma[i] <- mod6_out_rm_sim_try@sigma
+  }
+}
+
+```
+***
+Retrieve all random effect estimates (mean, credible intervals)
+```{r outlier: retrieve random effects, eval = FALSE}
+
+# speficy column names of the sim object as the names of the model components
+colnames(mod6_out_rm_sim@fixef) <- 
+  names(fixef(mod6_out_rm))
+
+# Retrieve all random effect estimates (mean, credible intervals) 
+# simultaneously
+coef_ranef_mod6_out_rm <- 
+  lapply(ranef(mod6_out_rm_sim), function(x) c(mean(apply(x[, , 1], 1, var)),  
+                                    quantile(apply(x[, , 1], 1, var), 
+                                             prob = c(0.025, 0.975))))
+
+# Transpose the random effects table
+ranefTable <- 
+  as.data.frame(t(as.data.frame(coef_ranef_mod6_out_rm))) %>%
+  rownames_to_column("coefName")
+```
+***
+Retrieve all fixed effect estimates (mean, credible intervals)
+```{r outlier: retrieve fixed effects, eval = FALSE}
+# Retrieve all fixed effect estimates (mean, credible intervals) 
+# simultaneously 
+coef_fixef_mod6_out_rm <- 
+  rbind(apply(mod6_out_rm_sim@fixef, 2, mean), 
+        apply(mod6_out_rm_sim@fixef, 2, quantile, 
+              prob = c(0.025, 0.975)))
+
+# Transpose the fixed effects table
+fixefTable <- 
+  as.data.frame(t(as.data.frame(coef_fixef_mod6_out_rm))) %>%
+  rownames_to_column("coefName")
+```
+***
+Calculate adjusted repeatabilities
+```{r outlier: calculate adjusted repeatabilities, eval = FALSE}
+# Retrieve residual variance estimate (mean, credible intervals)
+coef_res_mod6_out_rm <- 
+  c(mean(mod6_out_rm_sim@sigma^2), quantile(mod6_out_rm_sim@sigma^2, c(0.025, 0.975)))
+
+# Transpose the residual effects table
+resTable <- 
+  as.data.frame(t(as.data.frame(coef_res_mod6_out_rm))) %>%
+  mutate(coefName = "residual")
+
+# Calculate total phenotypic variance not explained by fixed effects
+ranefAndResidualAseggdf <- 
+  cbind(as.data.frame(lapply(ranef(mod6_out_rm_sim), 
+                             function(x) apply(x[, , 1], 1, var))), 
+        residual = mod6_out_rm_sim@sigma^2)
+
+ranefAndResidualAseggdf$varTotal <- 
+  rowSums(ranefAndResidualAseggdf)
+
+# Express each random effect as proportion of total (rpt)
+rpt_each <- 
+  ranefAndResidualAseggdf %>%
+  mutate_at(vars( -varTotal), funs(./varTotal)) %>% 
+  suppressWarnings()
+
+coef_rpt_all <- 
+  apply(rpt_each, 2, 
+        function(x) c(mean (x), quantile (x, prob = c(0.025, 0.975))))
+
+coefRptTable <- 
+  as.data.frame(t(coef_rpt_all)) %>%
+  rownames_to_column("coefName") %>%
+  filter(!coefName %in% c("varTotal"))
+```
+***
+Retrieve peak performance estimates
+```{r outlier: retrieve peak performance estimates, eval = FALSE}
+# Calculate the traits' value at peak performance and store in table
+ypeak_mod <- 
+  mod6_out_rm_sim@fixef[, 1] - ((mod6_out_rm_sim@fixef[, 2])^2 / (4 * mod6_out_rm_sim@fixef[, 3]))
+
+coef_ypeak_mod <- 
+  c(mean(ypeak_mod), quantile(ypeak_mod, c(0.025,0.975)))
+
+coefYpeakTable <- 
+  as.data.frame(cbind(coefName = "Egg volume at peak", 
+                      as.data.frame(t(as.data.frame(coef_ypeak_mod)))))
+
+# Calculate the age at peak performance and store in table
+xpeak_mod <- 
+  -(mod6_out_rm_sim@fixef[, 2]) / (2 * mod6_out_rm_sim@fixef[, 3])
+
+coef_xpeak_mod <- 
+  c(mean(xpeak_mod), quantile(xpeak_mod, c(0.025, 0.975)))
+
+coefXpeakTable <- 
+  as.data.frame(cbind(coefName = "Age at peak", 
+                      as.data.frame(t(as.data.frame(coef_xpeak_mod)))))
+```
+
+```{r outlier: calculate age differences, eval = FALSE}
+# Calculate the difference between age 0 and 1 expected from (age+age^2) and 
+# Min_Age (if mirrored is their sum).
+difAgeMin_mod <- 
+  mod6_out_rm_sim@fixef[, 2] + mod6_out_rm_sim@fixef[, 3] + mod6_out_rm_sim@fixef[, 4]
+
+coef_difAgeMin_mod <- 
+  c(mean(difAgeMin_mod), quantile(difAgeMin_mod, c(0.025, 0.975)))
+
+coefdifAgeMinTable <- 
+  as.data.frame(cbind(coefName = "DifAgeMin", 
+                      as.data.frame(t(as.data.frame(coef_difAgeMin_mod)))))
+```
+***
+
+<br><br>
+
+## Posthoc peak performance analysis
+```{r outlier: peak analysis, eval = FALSE}
+# create data that contains all factor levels and covariate means to use for
+# calculating predictions
+new_data_out_rm <- expand.grid(est_age = seq(0:max(eggdf_out_rm$est_age)) - 1,
+                               PrePeak_mod = c("1","0"),
+                               firstage = mean(eggdf_out_rm$firstage),
+                               lastage = mean(eggdf_out_rm$lastage),
+                               jul_std_date = mean(eggdf_out_rm$jul_std_date),
+                               polyandry = c("mono", "poly"))
+
+# create an empty list to store for-loop output
+bs.predictions_out_rm <- list(
+  
+  # peak values from previous simulation
+  peaks = xpeak_mod,
+  
+  # age-specific predictions
+  predictions = matrix(ncol = n_sim, nrow = nrow(new_data_out_rm)),
+  
+  # slope of pre-peak effect
+  PrePeak_age_effect = matrix(ncol = n_sim, nrow = 1),
+  
+  # slope of post-peak effect
+  PostPeak_age_effect = matrix(ncol = n_sim, nrow = 1))
+
+# for-loop to run peak analysis on all simulated posteriors above
+for (i in 1:n_sim) {
+  
+  # start loop with mod6_out_rmpeak as NULL and attempt as 0
+  mod6_out_rmpeak <- NULL
+  attempt <- 0
+  
+  # store model output and predictions only if mod6_out_rmpeak converged (i.e., is not
+  # NULL) and it's less than 100 attempts
+  while(is.null(mod6_out_rmpeak) && attempt <= 100) {
+    
+    # next attempt
+    attempt <- attempt + 1
+
+    # set peak based on the mean estimate from the previous simulation
+    eggdf_out_rm$PrePeak_mod[eggdf_out_rm$est_age < (ceiling(bs.predictions_out_rm$peaks[i]) + 1)] <- "0"
+    eggdf_out_rm$PrePeak_mod[eggdf_out_rm$est_age > ceiling(bs.predictions_out_rm$peaks[i])] <- "1"
+    
+    try(
+      # run peak analysis (i.e., now the quadratic effect is broken up into two
+      # pieces reflective of the pre- and post-peak sections of the curve)
+      mod6_out_rmpeak <- 
+        lmer(formula = eggv ~ PrePeak_mod + est_age * PrePeak_mod + 
+               firstage + lastage + as.numeric(jul_std_date) + 
+               I(as.numeric(jul_std_date)^2) + polyandry +
+               (1|ring/ID) + (1|year),
+               data = eggdf_out_rm)
+    )
+
+    try(
+      # calculate predictions from model
+      bs.predictions_out_rm$predictions[, i] <- 
+        predict(mod6_out_rmpeak, new_data_out_rm, re.form = NA)
+    )
+    
+  }
+  
+  # calculate the slope of the pre-peak age effect (i.e., because pre-peak is 
+  # set as the baseline level of the factor, this is simply the baseline age 
+  # slope)
+  bs.predictions_out_rm$PrePeak_age_effect[i] <- 
+    ifelse("PrePeak_mod1:est_age" %in% 
+             row.names(summary(mod6_out_rmpeak)$coefficients), 
+           summary(mod6_out_rmpeak)$coefficients["est_age","Estimate"],
+           NA)
+  
+  # calculate the slope of the post-peak age effect (i.e., because pre-peak is 
+  # set as the baseline level of the factor, this is calculated as the baseline 
+  # age slope plus the interaction slope)
+  bs.predictions_out_rm$PostPeak_age_effect[i] <- 
+    ifelse("PrePeak_mod1:est_age" %in% 
+             row.names(summary(mod6_out_rmpeak)$coefficients), 
+           summary(mod6_out_rmpeak)$coefficients["est_age","Estimate"] + 
+             summary(mod6_out_rmpeak)$coefficients["PrePeak_mod1:est_age","Estimate"],
+           NA)
+
+}
+```
+***
+Retrieve pre- and post-peak age effects
+```{r outlier: retrieve peak age effects, eval = FALSE}
+# Retrieve pre-peak age estimate (mean, credible intervals)
+coefPrePeakAgeTable <- 
+  data.frame(coefName = "Pre-peak age effect",
+             mean_estimate = mean(bs.predictions_out_rm$PrePeak_age_effect, 
+                                  na.rm = TRUE),
+             lower95 = quantile(bs.predictions_out_rm$PrePeak_age_effect, 
+                                prob = c(0.025), na.rm = TRUE),
+             upper95 = quantile(bs.predictions_out_rm$PrePeak_age_effect, 
+                                prob = c(0.975), na.rm = TRUE), 
+             row.names = 1)
+
+# Retrieve post-peak age estimate (mean, credible intervals)
+coefPostPeakAgeTable <- 
+  data.frame(coefName = "Post-peak age effect",
+             mean_estimate = mean(bs.predictions_out_rm$PostPeak_age_effect, 
+                                  na.rm = TRUE),
+             lower95 = quantile(bs.predictions_out_rm$PostPeak_age_effect, 
+                                prob = c(0.025), na.rm = TRUE),
+             upper95 = quantile(bs.predictions_out_rm$PostPeak_age_effect, 
+                                prob = c(0.975), na.rm = TRUE), 
+             row.names = 1)
+```
+***
+Compile all results into one table
+```{r outlier: model summary table, eval = FALSE}
+# Retrieve sample sizes
+sample_sizes <-
+  eggdf_out_rm %>% 
+  summarise(Year = n_distinct(year),
+            Individual = n_distinct(ring),
+            Nests = n_distinct(ID),
+            Observations = nrow(eggdf_out_rm))
+sample_sizes <- 
+  as.data.frame(t(as.data.frame(sample_sizes))) %>%
+  rownames_to_column("coefName") %>% 
+  rename(mean_estimate = V1)
+
+# clean model component names
+mod_comp_names <- 
+  data.frame(comp_name = c("Intercept",
+                           "Linear age",
+                           "Quadratic age",
+                           "First age",
+                           "Last age",
+                           "Linear lay date",
+                           "Quadratic lay date",
+                           "Polyandry",
+                           "Nest / Individual",
+                           "Individual",
+                           "Year",
+                           "Residual",
+                           "Nest / Individual",
+                           "Individual",
+                           "Year",
+                           "Residual",
+                           "Egg volume at peak",
+                           "Age at peak",
+                           "Pre-peak age effect",
+                           "Post-peak age effect",
+                           "Years",
+                           "Individuals",
+                           "Nests",
+                           "Observations (i.e., Eggs)"))
+
+# Store all parameters into a single table and clean it up
+allCoefs_mod <- 
+  bind_rows(fixefTable, 
+            ranefTable, 
+            resTable,
+            coefRptTable,
+            coefYpeakTable,
+            coefXpeakTable) %>% 
+  rename(lower95 = `2.5%`,
+         upper95 = `97.5%`,
+         mean_estimate = V1) %>% 
+  bind_rows(.,
+            coefPrePeakAgeTable,
+            coefPostPeakAgeTable,
+            sample_sizes) %>%
+  bind_cols(.,
+            mod_comp_names) %>% 
+    # back-transform the age at peak estimate to the correct age at first reproduction
+  mutate(mean_estimate = ifelse(coefName == "Age at peak", mean_estimate + 1, mean_estimate),
+         lower95 = ifelse(coefName == "Age at peak", lower95 + 1, lower95),
+         upper95 = ifelse(coefName == "Age at peak", upper95 + 1, upper95)) %>% 
+  mutate(coefString = ifelse(!is.na(lower95),
+                             paste0("[", 
+                             round(lower95, 2), ", ", 
+                             round(upper95, 2), "]"),
+                             NA),
+         effect = c(rep("Fixed effects \U1D6FD", nrow(fixefTable)),
+                    rep("Random effects \U1D70E\U00B2", nrow(ranefTable)),
+                    rep("Random effects \U1D70E\U00B2", nrow(resTable)),
+                    rep("Adjusted Repeatability \U1D45F", nrow(coefRptTable)),
+                    rep("Peak Performance \U1D6FD", nrow(coefYpeakTable)),
+                    rep("Peak Performance \U1D6FD", nrow(coefXpeakTable)),
+                    rep("Pre-/post-peak analysis \U1D6FD", nrow(coefPrePeakAgeTable)),
+                    rep("Pre-/post-peak analysis \U1D6FD", nrow(coefPostPeakAgeTable)),
+                    rep("Sample sizes \U1D45B", nrow(sample_sizes)))) %>%
+  dplyr::select(effect, everything())
+
+# re-organize model components for table
+allCoefs_mod <- 
+  allCoefs_mod[c(c(1:8), 10, 9, 11, 12, 14, 13, 15, 16, c(17:24)), ]
+```
+***
+Wrangle predicted values for each iteration of the simulation proceedure (for visual purposes)
+```{r outlier: plotting, eval = FALSE}
+# expand new data across the 5000 simulations for binding to predictions
+new_data_out_rm_expanded <-
+  data.frame(new_data_out_rm)[rep(seq_len(nrow(data.frame(new_data_out_rm))), n_sim), ]
+
+# wrangle predicted values of simulation for plotting
+predicted_values <-
+  
+  # melt the predictions and peaks of the simulation and merge each dataframe
+  left_join(melt(bs.predictions_out_rm$predictions), 
+            data.frame(value = melt(bs.predictions_out_rm$peaks),
+                       Var2 = c(1:n_sim)), 
+            by = "Var2") %>%
+  
+  # add the new_data_out_rm levels to each iteration's vector of predictions
+  bind_cols(., new_data_out_rm_expanded) %>% 
+
+  # rename columns
+  rename(iteration = Var2,
+         eggv = value.x,
+         peak_age = value.y) %>% 
+    
+  # remove unneeded columns
+  dplyr::select(-Var1) %>% 
+
+  # filter dataframe so that each iteration only contains pre- and post-peak 
+  # predictions that are within the peak
+  filter((PrePeak_mod == "0" & est_age < (ceiling(peak_age) + 1)) |
+           (PrePeak_mod == "1" & est_age > ceiling(peak_age)))
+```
+***
+Store model output
+```{r outlier: collate model output, eval = FALSE}
+results_mod6_out_rm <- 
+  list(mod6_out_rm_posteriors = mod6_out_rm_sim,
+       mod6_out_rm_peak_analysis_predictions = predicted_values,
+       mod6_out_rm_summary_table = allCoefs_mod)
+```
+
+```{r outlier: save model output, eval = FALSE, echo = FALSE}
+save(results_mod6_out_rm,
+     file = "R_objects/results_mod6_out_rm.rds")
+```
+
+```{r outlier: load model output, echo = FALSE}
+load("R_objects/results_mod6_out_rm.rds")
+```
+***
+Produce table of effect sizes in a similar layout to that shown in Table 1 of Dingemanse et al. JAE 2020 (DOI: 10.1111/1365-2656.13122)
+```{r outlier: model estimates table, echo = FALSE}
+table_S2_out_rm <- 
+results_mod6_out_rm$mod6_out_rm_summary_table %>% 
+  dplyr::select(effect, comp_name, mean_estimate, coefString) %>% 
+  gt(rowname_col = "row",
+     groupname_col = "effect") %>% 
+  cols_label(comp_name = "",
+             mean_estimate = "Parameter estimate",
+             coefString = "95% credible interval") %>% 
+  fmt_number(columns = vars(mean_estimate),
+             rows = 1:18,
+             decimals = 2,
+             use_seps = FALSE) %>% 
+  fmt_number(columns = vars(mean_estimate),
+             rows = 19:22,
+             decimals = 0,
+             use_seps = FALSE) %>% 
+  fmt_missing(columns = 1:4,
+              missing_text = "") %>% 
+  cols_align(align = "left",
+             columns = vars(comp_name)) %>% 
+  tab_options(row_group.font.weight = "bold",
+              row_group.background.color = brewer.pal(9,"Greys")[3],
+              table.font.size = 12,
+              data_row.padding = 3,
+              row_group.padding = 4,
+              summary_row.padding = 2,
+              column_labels.font.size = 14,
+              row_group.font.size = 12,
+              table.width = pct(90))
+```
+
+```{r outlier: save table 3, eval = FALSE, echo = FALSE}
+table_S2_out_rm %>% 
+  gtsave("table_S2_out_rm.png", path = "results/tables/", expand = 1)
+```
+
+```{r table S2, echo = FALSE, fig.height = 6, fig.width = 5}
+image_read("results/tables/table_S2_out_rm.png")
+```
+
+***
+Run the model with "poly(est_age, 2, raw = TRUE)" instead of "est_age + I(est_age^2)" to make plotting the trend line easier
+```{r outlier: polynomial model fitted values, message = FALSE}
+mod6_out_rma <-
+  lmer(eggv ~ poly(est_age, 2, raw = TRUE) + firstage + lastage +
+         poly(jul_std_date, 2, raw = TRUE) + polyandry +
+         (1|ring/ID) + (1|year), 
+       data = eggdf_out_rm)
+
+# extract the fitted values of the polynomial age effect
+mod6_out_rma_age_fits <- 
+  as.data.frame(effect("poly(est_age, 2, raw = TRUE)", mod6_out_rma, 
+                       xlevels = list(est_age = seq(min(eggdf_out_rm$est_age), 
+                                                    max(eggdf_out_rm$est_age), 1))))
+
+# extract the fitted values of the polynomial season effect
+mod6_out_rma_season_fits <- 
+  as.data.frame(effect("poly(jul_std_date, 2, raw = TRUE)", mod6_out_rma, 
+                       xlevels = list(jul_std_date = seq(min(eggdf_out_rm$jul_std_date), 
+                                                         max(eggdf_out_rm$jul_std_date), 0.1))))
+```
+***
+
+<br><br>
+
+## Senescence plot
+Here we show the overall results of the analysis. The black line shows the overall quadratic trend of egg volume with age while controlling for selective appearence and dissappearence. The orange lines show the predicted pre-peak trends for each run of the simulation, while the green lines show the same for the post-peak trend. The points in the plot visualise the raw data, with each point being a single egg. The density plot on the top of the figure illustrates the spread of the 'age at peak performance' captured by our simulation proceedure. The vertical dashed line represents the median age of this posterior distribution.
+```{r outlier: age trend plot code, eval = FALSE, echo = FALSE, fig.height = 6, fig.width = 4}
+peak_analysis_predictions_avg_out_rm <- 
+  results_mod6_out_rm$mod6_out_rm_peak_analysis_predictions %>% 
+  group_by(iteration, PrePeak_mod, est_age) %>% 
+  summarise(eggv = mean(eggv),
+            peak_age = first(peak_age))
+
+# plot the posterior age at peak distribution
+peak_age_plot <- 
+  ggplot(distinct(data.frame(value = 
+                               melt(results_mod6_out_rm$mod6_out_rm_peak_analysis_predictions$peak_age))), 
+         aes(value + 1)) + 
+  geom_density(alpha = 0.3, color = "grey40", fill = "#7570B3") + 
+  theme_void() +
+  theme(legend.position = "none") +
+  scale_x_continuous(limits = c(0, 14), breaks = c(1:13)) +
+  annotate(geom = "text", y = 0.25, x = 7, 
+           label = "Peak age posterior distribution", 
+           color = "black", size = 2.5, fontface = 'italic')
+
+# brewer.pal(6, "Dark2")
+cbPalette <- c("#1B9E77", "#D95F02")
+
+# plot the quadratic effect of age and the pre- and post-peak age effects
+raw_data_plot_age <- 
+  ggplot() +
+  geom_vline(xintercept = median(results_mod6_out_rm$mod6_out_rm_peak_analysis_predictions$peak_age) + 1, 
+             linetype = "dashed", color = "grey") +
+  geom_point(data = eggdf_out_rm, alpha = 0.1,
+             aes(x = est_age + 1, y = eggv), color = "black") +
+  geom_point(data = filter(eggdf, est_age > 8), shape = 4, alpha = 0.5,
+             aes(x = est_age + 1, y = eggv), color = "black") +
+  geom_line(data = filter(peak_analysis_predictions_avg_out_rm, PrePeak_mod == "0"),
+            aes(x = as.numeric(est_age) + 1, y = eggv, group = iteration),
+            lwd = 1, alpha = 0.01, color = "#D95F02") +
+  geom_line(data = filter(peak_analysis_predictions_avg_out_rm, PrePeak_mod == "0"),
+            aes(x = as.numeric(est_age) + 1, y = eggv, group = iteration),
+            lwd = 1, alpha = 0.01, color = "#D95F02") +
+  geom_line(data = filter(peak_analysis_predictions_avg_out_rm, PrePeak_mod == "1"),
+            aes(x = as.numeric(est_age) + 1, y = eggv, group = iteration),
+            lwd = 1, alpha = 0.01, color = "#1B9E77") +
+  geom_line(data = filter(peak_analysis_predictions_avg_out_rm, PrePeak_mod == "1"),
+            aes(x = as.numeric(est_age) + 1, y = eggv, group = iteration),
+            lwd = 1, alpha = 0.01, color = "#1B9E77") +
+  geom_line(data = mod6_out_rma_age_fits, aes(x = est_age + 1, y = fit),
+            lwd = 0.5, color = "black") +
+  geom_ribbon(data = mod6_out_rma_age_fits, aes(x = est_age + 1, ymax = upper, ymin = lower),
+              lwd = 1, alpha = 0.25) +
+  ylab(expression(paste("Egg volume (mm", ''^{3}, ")" %+-% "95% CI", sep = ""))) +
+  xlab("Age (years)") +
+  scale_x_continuous(limits = c(0, 14), breaks = c(1:13)) +
+  theme(legend.position = "none") +
+  scale_fill_manual(values = cbPalette) +
+  scale_color_manual(values = cbPalette)
+
+# bind both plots into a grob object
+g1 <- gtable_rbind(ggplotGrob(peak_age_plot),
+            ggplotGrob(raw_data_plot_age))
+
+# function to specify the hieght of each grob object
+set_panel_heights <- 
+  function(g, heights1){
+  g$heights <- grid:::unit.list(g$heights)
+  id_panels <- unique(g$layout[g$layout$name == "panel", "t"])
+  g$heights[id_panels][1] <- heights1[[1]]
+  g$heights[id_panels][2] <- heights1[[2]]
+  g
+  }
+
+# specify heights of grob
+Fig_S4_out_rm <- 
+  set_panel_heights(g = g1, 
+                    heights1 = list(grid::unit(1, "in"), 
+                                    grid::unit(4, "in")))
+```
+
+```{r outlier: save age trend plot, eval = FALSE, echo = FALSE}
+ggsave(plot=Fig_S4_out_rm,
+  filename = "results/figures/Fig_S4_out_rm.pdf",
+    width = 5,
+    height = 5.5, 
+    units = "in",
+    device = cairo_pdf)
+```
+
+```{r outlier: Fig S4, echo = FALSE, fig.height = 6, fig.width = 5}
+image_read("results/figures/Fig_S4_out_rm_crop.png")
+```
+
+***
+
+<br><br>
+
+## Season plot
+Here we show the overall results of the analysis. The black line shows the overall quadratic trend of egg volume with age while controlling for selective appearence and dissappearence. The orange lines show the predicted pre-peak trends for each run of the simulation, while the green lines show the same for the post-peak trend. The points in the plot visualise the raw data, with each point being a single egg. The density plot on the top of the figure illustrates the spread of the 'age at peak performance' captured by our simulation proceedure. The vertical dashed line represents the median age of this posterior distribution.
+```{r outlier: season trend plot code, eval = FALSE, echo = FALSE, fig.height = 6, fig.width = 4}
+polyandry_colors <- c("black", "#f03b20")
+
+# plot the posterior age at peak distribution
+polyandry_season_plot <-
+  ggplot(eggdf_out_rm) + 
+  geom_density(alpha = 0.3, aes(jul_std_date, fill = as.factor(polyandry))) + 
+  theme_void() +
+  theme(legend.position = c(0.85, 0.45),
+        legend.title = element_blank(),
+        legend.direction = "horizontal") +
+  scale_x_continuous(limits = c(-3, 4), breaks = seq(-2.5, 3.5, 0.5)) +
+  scale_y_continuous(limits = c(0, 0.5)) +
+  annotate(geom = "text", y = 0.3, x = -2.5,
+           label = "Lay date distribution", 
+           color = "black", size = 2.5, fontface = 'italic') +
+  scale_fill_manual(values = polyandry_colors, 
+                    guide = guide_legend(title.position = "top", nrow = 2),
+                    labels = c("Monogamous", "Polyandrous")) +
+  labs(fill = "Number of mates observed")
+
+
+# plot the quadratic trend, pre- and post-peak trend, and raw data
+raw_data_plot_season <- 
+  ggplot() +
+  geom_point(data = eggdf_out_rm, alpha = 0.3,
+             aes(x = jul_std_date, y = eggv, fill = as.factor(polyandry)), shape = 21) +
+  geom_line(data = mod6_out_rma_season_fits, aes(x = jul_std_date, y = fit),
+            lwd = 0.5, color = "black") +
+  geom_ribbon(data = mod6_out_rma_season_fits, aes(x = jul_std_date, ymax = upper, ymin = lower),
+              lwd = 1, alpha = 0.25) +
+  ylab(expression(paste("Egg volume (mm", ''^{3}, ")" %+-% "95% CI", sep = ""))) +
+  xlab("Julian lay date (standardized around annual mean)") +
+  scale_x_continuous(limits = c(-3, 4), breaks = seq(-2.5, 3.5, 0.5)) +
+  theme(legend.position = "none") +
+  scale_fill_manual(values = polyandry_colors)
+
+# bind both plots into a grob object
+g1 <- gtable_rbind(ggplotGrob(polyandry_season_plot),
+            ggplotGrob(raw_data_plot_season))
+
+# function to specify the hieght of each grob object
+set_panel_heights <- 
+  function(g, heights1){
+  g$heights <- grid:::unit.list(g$heights)
+  id_panels <- unique(g$layout[g$layout$name == "panel", "t"])
+  g$heights[id_panels][1] <- heights1[[1]]
+  g$heights[id_panels][2] <- heights1[[2]]
+  g
+  }
+
+# specify heights of grob
+Fig_season_out_rm <- 
+  set_panel_heights(g = g1, 
+                    heights1 = list(grid::unit(1, "in"), 
+                                    grid::unit(4, "in")))
+```
+
+```{r outlier: save seasonal trend plot, eval = FALSE, echo = FALSE}
+ggsave(plot=Fig_season_out_rm,
+  filename = "results/figures/Fig_season_out_rm.pdf",
+    width = 5,
+    height = 5.5, 
+    units = "in",
+    device = cairo_pdf)
+```
+
+```{r outlier: Fig 4, echo = FALSE, fig.height = 6, fig.width = 5}
+image_read("results/figures/Fig_season_out_rm_crop.png")
+```
+
+***
+
+<br><br>
+
+## Effect-size plot
+Here we visualize the effect sizes for all parameters estimated in our model (95% credible intervals are shown around each mean estimate).
+```{r outlier: effect size plot code, echo = FALSE, eval = FALSE}
+# plot mean and credible intervals for fixed effects, random effects,
+# residual variance, and peak performance estimates
+
+results_mod6_out_rm$mod6_out_rm_summary_table$coefName <- 
+  factor(results_mod6_out_rm$mod6_out_rm_summary_table$coefName)                         
+
+plot_fixed_effect_sizes <- 
+  results_mod6_out_rm$mod6_out_rm_summary_table %>%
+  filter(effect == "Fixed effects \U1D6FD" & 
+                         coefName != "(Intercept)") %>%
+  mutate(comp_name = fct_relevel(comp_name,
+                                      "Quadratic lay date", "Linear lay date", 
+                                      "Polyandry",
+                                      "Last age", "First age", 
+                                      "Quadratic age", "Linear age")) %>%
+  ggplot() +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "grey") +
+  geom_point(aes(y = comp_name, x = mean_estimate)) +
+  geom_errorbarh(aes(xmin = lower95,
+                     xmax = upper95,
+                     y = comp_name),
+                 height = 0) +
+  theme(axis.title.x = element_blank()) +
+  ylab("Fixed Effects")
+
+plot_random_effect_sizes <- 
+  results_mod6_out_rm$mod6_out_rm_summary_table %>%
+  filter(effect == "Random effects \U1D70E\U00B2") %>%
+  mutate(comp_name = fct_relevel(comp_name,
+                                 "Residual", "Year", 
+                                 "Nest / Individual", "Individual")) %>%
+  ggplot() +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "grey") +
+  geom_point(aes(y = comp_name, x = mean_estimate)) +
+  geom_errorbarh(aes(xmin = lower95,
+                     xmax = upper95,
+                     y = comp_name),
+                 height = 0) +
+  theme(axis.title.x = element_blank()) +
+  ylab("Random Effects")
+
+plot_adjusted_repeatability <- 
+  results_mod6_out_rm$mod6_out_rm_summary_table %>%
+  filter(effect == "Adjusted Repeatability \U1D45F") %>%
+  mutate(comp_name = fct_relevel(comp_name,
+                                 "Residual", "Year", 
+                                 "Nest / Individual", "Individual")) %>%
+  ggplot() +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "grey") +
+  geom_point(aes(y = comp_name, x = mean_estimate)) +
+  geom_errorbarh(aes(xmin = lower95,
+                     xmax = upper95,
+                     y = comp_name),
+                 height = 0) +
+  theme(axis.title.x = element_blank()) +
+  ylab("Adjusted\nRepeatability")
+
+plot_peak_performance_trait <- 
+  results_mod6_out_rm$mod6_out_rm_summary_table %>%
+  filter(coefName == "Egg volume at peak") %>%
+  ggplot() +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "grey") +
+  geom_point(aes(y = coefName, x = mean_estimate)) +
+  geom_errorbarh(aes(xmin = lower95,
+                     xmax = upper95,
+                     y = coefName),
+                 height = 0) +
+  theme(axis.title.y = element_blank(),
+        axis.title.x = element_blank())
+
+plot_peak_performance_age <- 
+  results_mod6_out_rm$mod6_out_rm_summary_table %>%
+  filter(coefName == "Age at peak") %>%
+  ggplot() +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "grey") +
+  geom_point(aes(y = coefName, x = mean_estimate)) +
+  geom_errorbarh(aes(xmin = lower95,
+                     xmax = upper95,
+                     y = coefName),
+                 height = 0) +
+  ylab("Peak analysis") +
+  theme(axis.title.x = element_blank())
+
+plot_pre_post_peak_analysis <- 
+  results_mod6_out_rm$mod6_out_rm_summary_table %>%
+  filter(effect == "Pre-/post-peak analysis \U1D6FD") %>%
+  ggplot() +
+  geom_vline(xintercept = 0, linetype = "dashed", color = "grey") +
+  geom_errorbarh(aes(xmin = lower95,
+                     xmax = upper95,
+                     y = coefName, color = coefName),
+                 height = 0) +
+  geom_point(aes(y = coefName, x = mean_estimate)) +
+  theme(axis.title.y = element_blank(),
+        axis.title.x = element_blank(), 
+        strip.text.x = element_text("Pre-/post-peak analysis \U1D6FD"),
+        legend.position = "none") +
+  scale_color_manual(values = cbPalette)
+```
+
+```{r outlier: save effect size plot, fig.height = 8, fig.width = 4, eval = FALSE, echo = FALSE}
+model_effects_out <- plot_grid(plot_fixed_effect_sizes,
+          plot_random_effect_sizes,
+          plot_adjusted_repeatability, 
+          plot_peak_performance_trait,
+          plot_peak_performance_age, 
+          plot_pre_post_peak_analysis,
+          align = "v", nrow = 6, 
+          rel_heights = c(0.30, 0.19, 
+                          0.19, 0.09, 
+                          0.09, 0.14))
+ggsave(plot=model_effects_out,
+  filename = "results/figures/Fig_5_out_rm.pdf",
+    width = 6,
+    height = 8, 
+    units = "in",
+    device = cairo_pdf)
+```
+
+
+```{r outlier: Fig 5, echo = FALSE, fig.height = 6, fig.width = 5}
+image_read("results/figures/Fig_5_out_rm.png")
+```
+
+# Session Information
+Display session information to enhance reproducability in light of version-dependancy
+```{r session info, echo=FALSE}
+sessionInfo()
+```
+
+HTML document made with epuRate by [Yan Holtz](https://github.com/holtzy/).
