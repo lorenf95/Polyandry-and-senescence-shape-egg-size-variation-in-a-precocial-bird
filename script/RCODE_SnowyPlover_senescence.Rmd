@@ -20,6 +20,8 @@ output:
 knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
 ```
 
+This code is aimed at guiding the reader through the analysis process followed to obtain the results shown in our paper. All code necessary to reproduce our results is presented here. To access the data and other files necessary to reproduce our analysis please head to our [GitHub](https://github.com/lorenf95/Polyandry-and-senescence-shape-egg-size-variation-in-a-precocial-bird) or [OSF](https://doi.org/10.17605/OSF.IO/TE76U) repositories.
+
 **Prerequisites:** 
 
 The following packages are needed to employ this R Markdown document and can be easily installed from [CRAN](http://cran.r-project.org/) by uncommenting the `install.packages` function below:
