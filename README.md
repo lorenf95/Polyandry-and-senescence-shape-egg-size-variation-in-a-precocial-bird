@@ -8,11 +8,11 @@ This repository is also available on the Open Science Framework at [DOI 10.17605
 
 **Repository contents**
 
-`main/`:
+`root/`:
 
 - Open_me.Rproj: RStudio project file, which opens a new session of R with a working directory of the folder which it is found in. To replicate the analysis, we recommend cloning the whole repository locally and opening the .Rproj file, along with the script found in the [`script/`](script) folder.
 
-- [index.html](https://lorenf95.github.io/Polyandry-and-senescence-shape-egg-size-variation-in-a-precocial-bird/): github pages html file containing the knitted output of our .Rmd file. Click on the link to view it on you internet browser.
+- [index.md](https://lorenf95.github.io/Polyandry-and-senescence-shape-egg-size-variation-in-a-precocial-bird/): github pages html file containing the knitted output of our .Rmd file. Click on the link to view it on you internet browser.
 
 `script/`:
 
