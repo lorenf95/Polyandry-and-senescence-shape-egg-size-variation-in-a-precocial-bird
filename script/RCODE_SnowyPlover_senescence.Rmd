@@ -143,7 +143,7 @@ Ceuta_OPEN <-
 
 ```{r CeutaCLOSED connection, include=FALSE}
 Ceuta_OPEN <- 
-  dbConnect(SQLite(), dbname = "data/Ceuta_CLOSED_mdd_v1-1-5.sqlite")
+  dbConnect(SQLite(), dbname = "../Ceuta_Open/Ceuta_CLOSED/data/Ceuta_CLOSED_version_releases/Ceuta_CLOSED_mdd_v1-1-5.sqlite")
 ```
 ***
 Wrangle the capture data
@@ -1599,13 +1599,64 @@ poly_age_linear <-
   glmer(polyandry ~ est_age + firstage + lastage + 
        (1|ring) + (1|year), data = agedf, family = "binomial")
 
-summary(poly_age_linear)
+poly_age_quadratic <- 
+  glmer(polyandry ~ poly(est_age, 2) + firstage + lastage + 
+       (1|ring) + (1|year), data = agedf, family = "binomial")
 
 poly_age_null <- 
   glmer(polyandry ~  firstage + lastage + 
        (1|ring) + (1|year), data = agedf, family = "binomial")
 
-AIC(poly_age_linear, poly_age_null) # difference from null
+summary(poly_age_linear)
+summary(poly_age_quadratic)
+
+poly_age_model_list <- 
+  list(poly_age_linear, poly_age_quadratic, poly_age_null)
+poly_age_R2_list <- lapply(poly_age_model_list, function(x) r2_nakagawa(x))
+poly_age_R2_list <- lapply(poly_age_R2_list, function(x) unlist(x))
+poly_age_R2_list <- lapply(poly_age_R2_list, function(x) as.data.frame(x))
+
+R2_estimates <- 
+  data.frame(condR2 = c(unlist(lapply(poly_age_R2_list, function(x) x$x[1]))),
+             margR2 = c(unlist(lapply(poly_age_R2_list, function(x) x$x[2]))),
+             model = c("poly_age_linear", "poly_age_quadratic", "poly_age_null"))
+
+poly_age_mod_names_fixef <- 
+  data.frame(fixeffect = c("Null",
+                           "Quadratic age effect",
+                           "Linear age effect"),
+             model = c("poly_age_null", "poly_age_quadratic", "poly_age_linear"))
+
+AICc(poly_age_linear, poly_age_quadratic, poly_age_null) %>% 
+  mutate(model = row.names(.),
+         deltaAICc = AICc - min(AICc),
+         AICcWt = Weights(AICc)) %>% 
+  arrange(AICc) %>% 
+  mutate(ER = AICcWt[1]/AICcWt) %>% 
+  collect() %>%
+  left_join(., poly_age_mod_names_fixef, by = "model") %>%
+  left_join(., R2_estimates, by = "model") %>%
+  dplyr::select(fixeffect, df, AICcWt, deltaAICc, condR2, margR2) %>% 
+  gt() %>% 
+  cols_label(fixeffect = "Predictors of Polyandry",
+             df = md("***k***"),
+             AICcWt = md("***w***"),
+             deltaAICc = md("\U0394*AIC*"),
+             condR2 = md("*R<sup>2</sup><sub>conditional</sub>*"),
+             margR2 = md("*R<sup>2</sup><sub>marginal</sub>*")) %>% 
+  fmt_number(columns = vars(deltaAICc, AICcWt,
+                            condR2, margR2),
+             decimals = 2,
+             use_seps = FALSE) %>% 
+  tab_options(column_labels.font.weight = "bold",
+              table.width = pct(80),
+              column_labels.font.size = 14,
+              table.font.size = 12,
+              data_row.padding = 5) %>% 
+  cols_align(align = "left",
+             columns = vars(fixeffect))
+
+AIC(poly_age_linear, poly_age_quadratic, poly_age_null) # difference from null
 
 plot(effect("est_age", poly_age_linear)) # no apparent relationship
 xtabs(~polyandry + est_age, data = agedf) # no apparent relationship
@@ -1644,7 +1695,7 @@ mod6 <- lmer(eggv ~ est_age + I(est_age^2) + firstage + lastage +
 mod6_sim <- sim(mod6, n.sim = n_sim)
 
 # Simulate posterior distribution of model estimates. Only accept simulated
-# model estimates which produce a peak >= 1 and <= 11 (these are the ages
+# model estimates which produce a peak >= 1 and <= 10 (these are the ages
 # of our dataset and are thus biologically meaningful)
 for (i in 1:n_sim) {
   
