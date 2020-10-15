@@ -1,7 +1,7 @@
 ---
 title: "Polyandry and senescence shape egg size variation in a precocial bird"
 author: "[Lourenço Falcao Rodrigues](https://teguam.es/en/members/), [Anne Hertel](http://www.bik-f.de/root/index.php?page_id=1168), [Luke Eberhart-Phillips](https://www.orn.mpg.de/person/52988/3731861)"
-date: "24 July 2020"
+date: "15th October 2020"
 mail: "lourenco.falcao@uam.es"
 twitter: "FalcaoLourenco"
 home: "www.orn.mpg.de/3732316/projectkuepper4"
@@ -143,7 +143,7 @@ Ceuta_OPEN <-
 
 ```{r CeutaCLOSED connection, include=FALSE}
 Ceuta_OPEN <- 
-  dbConnect(SQLite(), dbname = "../Ceuta_Open/Ceuta_CLOSED/data/Ceuta_CLOSED_version_releases/Ceuta_CLOSED_mdd_v1-1-5.sqlite")
+  dbConnect(SQLite(), dbname = "data/Ceuta_CLOSED_mdd_v1-1-5.sqlite")
 ```
 ***
 Wrangle the capture data
@@ -736,7 +736,7 @@ nest_caps_F <-
   
   # change to as.Date format
   plover_date_convert() %>%
-  
+
   # specify the lay date as the nest initiation date. If this is unknown, then
   # subtract 25 days from the end date if the nest hatched. If this isnt the case,
   # then subtract 11 days from the found date if the float score of the first 
@@ -1549,6 +1549,45 @@ vif.lme <- function (fit) {
 vif.lme(mod6) # all VIF statistics are < 2 so there is no evidence of collinearity
 ```
 
+```{r figure S5}
+# Is there a difference of number of reproductive events between monogamous 
+# and polyandrous females?
+
+# wrangle data
+dbReadTable(Ceuta_OPEN, "BirdRef") %>% 
+dplyr::select(year, ID, male, female) %>%
+arrange(female) %>%
+group_by(female, year) %>%
+summarise(n_mates = n_distinct(male, na.rm = TRUE),
+          n_nests = n_distinct(ID, na.rm = TRUE)) %>% 
+mutate(polyandry = ifelse(n_mates > 1, "poly", "mono"),
+       year = as.integer(year),
+       n_mates = ifelse(n_mates == 0, 1, n_mates),
+       multi_clutch = ifelse(n_nests > 1, 1, 0)) %>% 
+rename(ring = female) %>% 
+mutate(polyandry = as.factor(polyandry)) %>% 
+Rmisc::summarySEwithin(.,
+                       measurevar = "n_nests",
+                       withinvars = "polyandry",
+                       idvar = "ring",
+                       conf.interval = 0.95) %>% 
+mutate(lcl = n_nests - ci,
+       ucl = n_nests + ci) %>% 
+ggplot(.) +
+geom_bar(aes(x = polyandry, y = n_nests, fill = polyandry),
+         colour = "grey40", stat = "identity", alpha = 0.4,
+         width = 0.5) +
+geom_errorbar(width = 0.1, aes(x = polyandry, y = n_nests, 
+                               ymin = lcl, ymax = ucl)) +
+ylab("Number of nests per female per year (mean ± 95% CI)") +
+xlab("Mating tactics of a given female in a given year") +
+scale_x_discrete(labels = c("mono" = "Monogamous",
+                            "poly" = "Polyandrous")) +
+scale_fill_manual(values = c("black", "#f03b20")) +
+theme(legend.position = "none")
+```
+
+
 ```{r laydate vs age}
 # is lay date confounded by age (i.e., does lay date vary with age and thus complicate the senescence effect)?
 # first extract the first nests of each individual for each year
@@ -1585,6 +1624,79 @@ plot(effect("polyandry", laydate_age_quad))
 
 plot(est_age ~ jul_std_date, data = eggdf_first_nests) # no apparent relationship
 cor(x = eggdf_first_nests$est_age, y = eggdf_first_nests$jul_std_date) # R2 = 0.02
+```
+
+```{r laydate vs polyandry}
+# is polyandry confounded by laydate (i.e., does liklihood of polyandry vary with lay date and thus complicate the senescence effect)?
+lay_date_polyandry_df <-
+  eggdf %>%
+  dplyr::select(ring, year, est_age, firstage, lastage, polyandry, jul_std_date) %>%
+  distinct() %>% 
+  mutate(polyandry = as.factor(polyandry))
+
+poly_lay_date_linear <- 
+  glmer(polyandry ~ jul_std_date + firstage + lastage + 
+       (1|ring) + (1|year), data = lay_date_polyandry_df, family = "binomial")
+
+poly_lay_date_quadratic <- 
+  glmer(polyandry ~ poly(jul_std_date, 2) + firstage + lastage + 
+       (1|ring) + (1|year), data = lay_date_polyandry_df, family = "binomial")
+
+poly_lay_date_null <- 
+  glmer(polyandry ~ firstage + lastage + 
+       (1|ring) + (1|year), data = lay_date_polyandry_df, family = "binomial")
+
+summary(poly_lay_date_linear)
+summary(poly_lay_date_quadratic)
+
+poly_lay_date_model_list <- 
+  list(poly_lay_date_linear, poly_lay_date_quadratic, poly_lay_date_null)
+poly_lay_date_R2_list <- lapply(poly_lay_date_model_list, function(x) r2_nakagawa(x))
+poly_lay_date_R2_list <- lapply(poly_lay_date_R2_list, function(x) unlist(x))
+poly_lay_date_R2_list <- lapply(poly_lay_date_R2_list, function(x) as.data.frame(x))
+
+R2_estimates <- 
+  data.frame(condR2 = c(unlist(lapply(poly_lay_date_R2_list, function(x) x$x[1]))),
+             margR2 = c(unlist(lapply(poly_lay_date_R2_list, function(x) x$x[2]))),
+             model = c("poly_lay_date_linear", "poly_lay_date_quadratic", 
+                       "poly_lay_date_null"))
+
+poly_lay_date_mod_names_fixef <- 
+  data.frame(fixeffect = c("Null",
+                           "Quadratic lay date effect",
+                           "Linear lay date effect"),
+             model = c("poly_lay_date_null", "poly_lay_date_quadratic", "poly_lay_date_linear"))
+
+AICc(poly_lay_date_linear, poly_lay_date_quadratic, poly_lay_date_null) %>% 
+  mutate(model = row.names(.),
+         deltaAICc = AICc - min(AICc),
+         AICcWt = Weights(AICc)) %>% 
+  arrange(AICc) %>% 
+  mutate(ER = AICcWt[1]/AICcWt) %>% 
+  collect() %>%
+  left_join(., poly_lay_date_mod_names_fixef, by = "model") %>%
+  left_join(., R2_estimates, by = "model") %>%
+  dplyr::select(fixeffect, df, AICcWt, deltaAICc, condR2, margR2) %>% 
+  gt() %>% 
+  cols_label(fixeffect = "Predictors of Polyandry",
+             df = md("***k***"),
+             AICcWt = md("***w***"),
+             deltaAICc = md("\U0394*AIC*"),
+             condR2 = md("*R<sup>2</sup><sub>conditional</sub>*"),
+             margR2 = md("*R<sup>2</sup><sub>marginal</sub>*")) %>% 
+  fmt_number(columns = vars(deltaAICc, AICcWt,
+                            condR2, margR2),
+             decimals = 2,
+             use_seps = FALSE) %>% 
+  tab_options(column_labels.font.weight = "bold",
+              table.width = pct(80),
+              column_labels.font.size = 14,
+              table.font.size = 12,
+              data_row.padding = 5) %>% 
+  cols_align(align = "left",
+             columns = vars(fixeffect))
+
+plot(effect("jul_std_date", poly_lay_date_linear)) # no apparent relationship
 ```
 
 ```{r polyandry vs age}
@@ -1655,8 +1767,6 @@ AICc(poly_age_linear, poly_age_quadratic, poly_age_null) %>%
               data_row.padding = 5) %>% 
   cols_align(align = "left",
              columns = vars(fixeffect))
-
-AIC(poly_age_linear, poly_age_quadratic, poly_age_null) # difference from null
 
 plot(effect("est_age", poly_age_linear)) # no apparent relationship
 xtabs(~polyandry + est_age, data = agedf) # no apparent relationship
